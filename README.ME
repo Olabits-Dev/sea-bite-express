@@ -1,0 +1,157 @@
+# 📊 Business Sales & Expense Tracker (PWA)
+
+A lightweight Progressive Web App (PWA) for tracking business sales and expenses with detailed reporting, CSV export, Nigerian Naira (₦) currency formatting, and offline support.
+
+This system is fully frontend-based and uses browser localStorage for data persistence.
+
+---
+
+## 🚀 Features
+
+### 💰 Financial Tracking
+- Add Sales
+- Add Expenses
+- Edit Records
+- Delete Records
+- Automatic data saving (localStorage)
+
+### 📈 Smart Reporting
+- Daily Report
+- Weekly Report
+- Monthly Report
+- Yearly Report
+- Automatic Profit Calculation
+- Chart Visualization (Chart.js)
+
+### 📤 Advanced CSV Export
+- Exports both:
+  - Summary (Total Sales, Expenses, Profit)
+  - Detailed Records (Type, Amount, Description, Date)
+- Period-based export
+- Excel-ready format
+- Auto-generated filename with date
+
+### 🇳🇬 Nigerian Currency Support
+- All amounts formatted in Naira (₦)
+- Uses `Intl.NumberFormat('en-NG')`
+- Proper thousand separators
+
+### 📱 Progressive Web App (PWA)
+- Installable on Desktop & Mobile
+- Works Offline
+- Service Worker Caching
+- App-like experience
+
+---
+
+## 🛠 Tech Stack
+
+- HTML5
+- CSS3
+- JavaScript (Vanilla JS)
+- Chart.js
+- Web App Manifest
+- Service Worker
+- Browser localStorage
+
+---
+
+## 📁 Project Structure
+
+SALETRACKER/
+│
+├── index.html
+├── style.css
+├── script.js
+├── manifest.json
+├── service-worker.js
+└── README.md
+
+
+---
+⚙️ Installation & Usage
+
+Run Locally
+
+You MUST use a local server for PWA features:
+
+Recommended:
+
+VS Code Live Server extension
+
+or
+
+Then open in browser:
+📲 Installing as an App
+
+Open in Google Chrome
+
+Click the Install App button
+
+Or use browser install prompt
+
+The app will be installed on:
+
+Desktop
+
+Android device
+
+It will work offline after installation.
+
+📊 How Reports Work
+
+Reports are generated based on selected period:
+
+Daily → Today's records
+Weekly → Last 7 days
+Monthly → Current month
+Yearly → Current year
+
+CSV Export Format
+
+The exported file contains:
+BUSINESS REPORT
+Report Type: MONTHLY
+Generated On: Date
+SUMMARY
+Total Sales, Total Expenses, Profit
+DETAILED RECORDS
+Type, Amount, Description, Date
+
+DATA STORAGE
+
+Data is stored in browser localStorage
+
+No backend required
+
+No database required
+
+No internet required after install
+
+⚠️ Important:
+Clearing browser data will delete all records.
+
+🔒 Limitations
+
+This is frontend-only:
+
+Data is device-specific
+
+No cloud backup
+
+No multi-user system
+
+No automatic email sending
+
+
+👨‍💻 Author
+
+Developed by: Samuel Olawale Atilola
+
+Software Developer | Frontend & Backend | Web Designer
+
+📜 License
+
+This project is open-source and free to modify for personal or commercial use.
+
+------.
