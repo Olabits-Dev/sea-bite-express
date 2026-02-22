@@ -1,63 +1,96 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>SeaBite Express Business Tracker</title>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#007bff" />
+  <title>SeaBite Express Business Tracker</title>
 
-<link rel="stylesheet" href="style.css">
-<link rel="manifest" href="manifest.json">
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <link rel="stylesheet" href="style.css" />
+  <link rel="manifest" href="manifest.json" />
 </head>
 
 <body>
+  <h1>SeaBite Express Business Report Dashboard</h1>
 
-<h1>SeaBite Express Business Report Dashboard</h1>
+  <button id="installBtn" style="display:none;">Install App</button>
 
-<button id="installBtn" style="display:none;">Install App</button>
+  <!-- Forms -->
+  <div class="grid">
+    <div class="form-section">
+      <h2>Add Sale</h2>
+      <input type="number" id="saleAmount" placeholder="Amount" inputmode="numeric" />
+      <input type="text" id="saleDesc" placeholder="Description" />
+      <button type="button" onclick="addSale()">Add Sale</button>
+    </div>
 
-<div class="form-section">
-    <h2>Add Sale</h2>
-    <input type="number" id="saleAmount" placeholder="Amount">
-    <input type="text" id="saleDesc" placeholder="Description">
-    <button onclick="addSale()">Add Sale</button>
-</div>
+    <div class="form-section">
+      <h2>Add Expense</h2>
+      <input type="number" id="expenseAmount" placeholder="Amount" inputmode="numeric" />
+      <input type="text" id="expenseDesc" placeholder="Description" />
+      <button type="button" onclick="addExpense()">Add Expense</button>
+    </div>
+  </div>
 
-<div class="form-section">
-    <h2>Add Expense</h2>
-    <input type="number" id="expenseAmount" placeholder="Amount">
-    <input type="text" id="expenseDesc" placeholder="Description">
-    <button onclick="addExpense()">Add Expense</button>
-</div>
-
-<div class="report-section">
+  <!-- Reports -->
+  <div class="report-section">
     <h2>Reports</h2>
-    <button onclick="generateReport('daily')">Daily</button>
-    <button onclick="generateReport('weekly')">Weekly</button>
-    <button onclick="generateReport('monthly')">Monthly</button>
-    <button onclick="generateReport('yearly')">Yearly</button>
-    <button onclick="exportCSV()">Export CSV</button>
+
+    <div class="report-actions">
+      <button type="button" onclick="generateReport('daily')">Daily</button>
+      <button type="button" onclick="generateReport('weekly')">Weekly</button>
+      <button type="button" onclick="generateReport('monthly')">Monthly</button>
+      <button type="button" onclick="generateReport('yearly')">Yearly</button>
+      <button type="button" onclick="exportCSV()">Export CSV</button>
+    </div>
 
     <div id="reportResult"></div>
-</div>
 
-<h2>All Records</h2>
-<table>
-<thead>
-<tr>
-<th>Type</th>
-<th>Amount</th>
-<th>Description</th>
-<th>Date</th>
-<th>Action</th>
-</tr>
-</thead>
-<tbody id="recordTable"></tbody>
-</table>
+    <!-- SUPER-LIGHT CHART (NO LIBRARY) -->
+    <div class="mini-chart" id="miniChart" style="display:none;">
+      <div class="mini-chart-header">
+        <span>Sales vs Expenses</span>
+        <span class="mini-chart-total" id="miniChartTotal"></span>
+      </div>
 
-<canvas id="chart"></canvas>
+      <div class="mini-bars">
+        <div class="mini-bar-row">
+          <div class="mini-bar-label">Sales</div>
+          <div class="mini-bar-track">
+            <div class="mini-bar-fill sales" id="salesBar"></div>
+          </div>
+          <div class="mini-bar-value" id="salesValue"></div>
+        </div>
 
-<script src="script.js"></script>
+        <div class="mini-bar-row">
+          <div class="mini-bar-label">Expenses</div>
+          <div class="mini-bar-track">
+            <div class="mini-bar-fill expenses" id="expensesBar"></div>
+          </div>
+          <div class="mini-bar-value" id="expensesValue"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <h2>All Records</h2>
+
+  <!-- Table wrapper for mobile scroll -->
+  <div class="table-wrap">
+    <table class="records-table">
+      <thead>
+        <tr>
+          <th>Type</th>
+          <th>Amount</th>
+          <th>Description</th>
+          <th>Date</th>
+          <th class="action-col">Action</th>
+        </tr>
+      </thead>
+      <tbody id="recordTable"></tbody>
+    </table>
+  </div>
+
+  <script src="script.js"></script>
 </body>
 </html>
-
