@@ -1,63 +1,103 @@
-# 📊 Business Sales & Expense Tracker (PWA)
+Business Sales & Expense Tracker (PWA)
 
-A lightweight Progressive Web App (PWA) for tracking business sales and expenses with detailed reporting, CSV export, Nigerian Naira (₦) currency formatting, and offline support.
+A modern Progressive Web App (PWA) for tracking business sales and expenses, generating smart financial reports, and exporting CSV summaries — built with performance, simplicity, and mobile usability in mind.
 
-This system is fully frontend-based and uses browser localStorage for data persistence.
+This repository serves as a public preview and portfolio showcase of the system.
 
----
+🚨 Public Preview Notice
 
-## 🚀 Features
+This repository is for demonstration and preview purposes only.
 
-### 💰 Financial Tracking
-- Add Sales
-- Add Expenses
-- Edit Records
-- Delete Records
-- Automatic data saving (localStorage)
+❌ Not intended for direct production use
+❌ Not licensed for redistribution or self-hosting
+❌ Not a plug-and-play open-source solution
 
-### 📈 Smart Reporting
-- Daily Report
-- Weekly Report
-- Monthly Report
-- Yearly Report
-- Automatic Profit Calculation
-- Chart Visualization (Chart.js)
+✅ Anyone interested in using, testing, or deploying this product must contact the developer.
 
-### 📤 Advanced CSV Export
-- Exports both:
-  - Summary (Total Sales, Expenses, Profit)
-  - Detailed Records (Type, Amount, Description, Date)
-- Period-based export
-- Excel-ready format
-- Auto-generated filename with date
+Contact required for access, customization, or commercial use.
 
-### 🇳🇬 Nigerian Currency Support
-- All amounts formatted in Naira (₦)
-- Uses `Intl.NumberFormat('en-NG')`
-- Proper thousand separators
+🚀 Key Features
+💰 Sales & Expense Tracking
 
-### 📱 Progressive Web App (PWA)
-- Installable on Desktop & Mobile
-- Works Offline
-- Service Worker Caching
-- App-like experience
+Add sales records
 
----
+Add expense records
 
-## 🛠 Tech Stack
+Edit and delete entries
 
-- HTML5
-- CSS3
-- JavaScript (Vanilla JS)
-- Chart.js
-- Web App Manifest
-- Service Worker
-- Browser localStorage
+Automatic data persistence (localStorage)
 
----
+Fully mobile responsive
 
-## 📁 Project Structure
+📈 Smart Financial Reporting
 
+Daily reports
+
+Weekly reports
+
+Monthly reports
+
+Yearly reports
+
+Automatic profit calculation
+
+Lightweight visual comparison (Sales vs Expenses)
+(No heavy chart libraries — optimized for mobile performance)
+
+📤 CSV Export (Business-Ready)
+
+Export includes:
+
+Financial summary (Sales, Expenses, Profit)
+
+Detailed transaction records
+
+Time-range based export
+
+Excel & Google Sheets compatible
+Auto-generated filenames
+
+🇳🇬 Nigerian Naira (₦) Support
+
+Native ₦ currency formatting
+
+Uses Intl.NumberFormat('en-NG')
+
+Clean number grouping and decimals
+
+📱 Progressive Web App (PWA)
+
+Installable on:
+
+Desktop
+
+Android
+
+iOS (Add to Home Screen)
+
+Offline-first behavior
+
+App-like user experience
+
+HTTPS-ready (tested via Netlify)
+
+🛠 Tech Stack
+
+HTML5
+
+CSS3 (Mobile-First, Responsive)
+
+Vanilla JavaScript
+
+Service Worker
+
+Web App Manifest
+
+Browser localStorage
+
+No frameworks. No heavy libraries. Optimized for speed and stability.
+
+📁 Project Structure
 SALETRACKER/
 │
 ├── index.html
@@ -67,91 +107,98 @@ SALETRACKER/
 ├── service-worker.js
 └── README.md
 
+🌐 Live Preview
 
----
-⚙️ Installation & Usage
+A live preview is available on request.
 
-Run Locally
+📩 Contact the developer for a demo link or client testing access.
 
-You MUST use a local server for PWA features:
+🔒 Data Handling
 
-Recommended:
+Data is stored locally on each device
 
-VS Code Live Server extension
+No backend or cloud storage in this version
 
-or
+Clearing browser data removes stored records
 
-Then open in browser:
-📲 Installing as an App
+This architecture was intentionally chosen for:
 
-Open in Google Chrome
+Speed
 
-Click the Install App button
+Offline usage
 
-Or use browser install prompt
+Small business scenarios
+🌐 Live Preview
 
-The app will be installed on:
+A live preview is available on request.
 
-Desktop
+📩 Contact the developer for a demo link or client testing access.
 
-Android device
+🔒 Data Handling
 
-It will work offline after installation.
+Data is stored locally on each device
 
-📊 How Reports Work
+No backend or cloud storage in this version
 
-Reports are generated based on selected period:
+Clearing browser data removes stored records
 
-Daily → Today's records
-Weekly → Last 7 days
-Monthly → Current month
-Yearly → Current year
+This architecture was intentionally chosen for:
 
-CSV Export Format
+Speed
 
-The exported file contains:
-BUSINESS REPORT
-Report Type: MONTHLY
-Generated On: Date
-SUMMARY
-Total Sales, Total Expenses, Profit
-DETAILED RECORDS
-Type, Amount, Description, Date
+Offline usage
 
-DATA STORAGE
+Small business scenarios
 
-Data is stored in browser localStorage
+⚠️ Limitations (Preview Version)
 
-No backend required
+Frontend-only
 
-No database required
+Device-specific data
 
-No internet required after install
+No user authentication
 
-⚠️ Important:
-Clearing browser data will delete all records.
+No cloud sync
 
-🔒 Limitations
+No automatic email delivery
 
-This is frontend-only:
+A backend-powered, multi-user SaaS version can be developed on request.
 
-Data is device-specific
+👨‍💻 Developer
 
-No cloud backup
+Samuel Olawale Atilola
+Software Developer
+Frontend • Backend • PWA • Business Systems
 
-No multi-user system
+📩 Contact required for:
 
-No automatic email sending
+Client testing
 
+Custom deployment
 
-👨‍💻 Author
+Commercial usage
 
-Developed by: Samuel Olawale Atilola
+Feature extensions
 
-Software Developer | Frontend & Backend | Web Designer
+SaaS conversion
 
-📜 License
+📩 Contact: atilolasamuel15@gmail.com 
 
-This project is open-source and free to modify for personal or commercial use.
+📜 License & Usage
 
-------.
+All rights reserved.
+
+This repository is:
+
+❌ Not open-source
+
+❌ Not free for reuse or deployment
+
+✅ Available for commercial licensing via agreement
+
+📩 Contact the developer before any usage beyond preview.
+
+⭐ If you like this project
+
+Feel free to star ⭐ the repository to support the work
+and reach out if you’d like to build something similar.
