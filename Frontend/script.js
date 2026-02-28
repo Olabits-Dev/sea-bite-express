@@ -1,7 +1,24 @@
 // ======================
-// CONFIG
+// API Base Fix
 // ======================
-const API_BASE = "https://sea-bite-express.onrender.com";
+
+// 1) Put your Render backend here once:
+const PROD_API_BASE = "https://sea-bite-express.onrender.com"; // 
+
+// 2) Auto detect local vs production
+const API_BASE = (() => {
+  const host = window.location.hostname;
+  const isLocal =
+    host === "localhost" ||
+    host === "127.0.0.1" ||
+    host.endsWith(".local");
+
+  return isLocal ? "http://localhost:5000" : PROD_API_BASE;
+})();
+
+// Optional: quick visibility in console
+console.log("API_BASE:", API_BASE);
+
 // ======================
 // IndexedDB (Offline Queue + Cached Data)
 // ======================
