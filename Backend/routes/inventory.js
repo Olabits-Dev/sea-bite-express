@@ -1,6 +1,8 @@
+// Backend/routes/inventory.js
 const express = require("express");
 const router = express.Router();
-const { all, get, query } = require("../db");
+
+const { all, get, query, pool } = require("../db");
 const { sendMailWithAttachment } = require("../utils/mailer");
 
 function cleanStr(v, fallback = "") {
@@ -49,7 +51,7 @@ router.get("/products", async (req, res) => {
   }
 });
 
-// CREATE PRODUCT + initial_qty auto stock-in movement
+// CREATE product + initial_qty auto Stock IN movement
 router.post("/products", async (req, res) => {
   const name = cleanStr(req.body?.name);
   const sku = cleanStr(req.body?.sku);
@@ -62,7 +64,7 @@ router.post("/products", async (req, res) => {
     return res.status(400).json({ error: "initial_qty must be 0 or more" });
   }
 
-  const client = await require("../db").pool.connect();
+  const client = await pool.connect();
   try {
     await client.query("BEGIN");
 
@@ -93,7 +95,7 @@ router.post("/products", async (req, res) => {
   }
 });
 
-// UPDATE PRODUCT (no qty changes here)
+// UPDATE product (metadata only)
 router.put("/products/:id", async (req, res) => {
   try {
     const id = toNumber(req.params.id);
@@ -119,11 +121,10 @@ router.put("/products/:id", async (req, res) => {
   }
 });
 
-// DELETE PRODUCT
+// DELETE product
 router.delete("/products/:id", async (req, res) => {
   try {
     const id = toNumber(req.params.id);
-
     const row = await get(`SELECT id FROM products WHERE id=$1`, [id]);
     if (!row) return res.status(404).json({ error: "Product not found" });
 
@@ -134,17 +135,17 @@ router.delete("/products/:id", async (req, res) => {
   }
 });
 
-// STOCK MOVE IN/OUT
+// Stock move IN/OUT
 router.post("/products/:id/move", async (req, res) => {
   const id = toNumber(req.params.id);
-  const type = cleanStr(req.body?.type).toUpperCase();
+  const type = cleanStr(req.body?.type).toUpperCase(); // IN | OUT
   const qty = toNumber(req.body?.qty, 0);
   const note = cleanStr(req.body?.note);
 
   if (!["IN", "OUT"].includes(type)) return res.status(400).json({ error: "type must be IN or OUT" });
   if (qty <= 0) return res.status(400).json({ error: "qty must be greater than 0" });
 
-  const client = await require("../db").pool.connect();
+  const client = await pool.connect();
   try {
     await client.query("BEGIN");
 
@@ -156,6 +157,7 @@ router.post("/products/:id/move", async (req, res) => {
 
     const currentQty = Number(p.rows[0].qty) || 0;
     const newQty = type === "IN" ? currentQty + qty : currentQty - qty;
+
     if (newQty < 0) {
       await client.query("ROLLBACK");
       return res.status(400).json({ error: "Insufficient stock" });
@@ -168,7 +170,8 @@ router.post("/products/:id/move", async (req, res) => {
     );
 
     const updated = await client.query(
-      `UPDATE products SET qty=$1, updated_at=NOW() WHERE id=$2
+      `UPDATE products SET qty=$1, updated_at=NOW()
+       WHERE id=$2
        RETURNING id, name, sku, unit, qty, reorder_level, updated_at`,
       [newQty, id]
     );
@@ -183,7 +186,7 @@ router.post("/products/:id/move", async (req, res) => {
   }
 });
 
-// EXPORT CSV
+// Export inventory CSV
 router.get("/export/inventory.csv", async (req, res) => {
   try {
     const rows = await all(
@@ -201,7 +204,7 @@ router.get("/export/inventory.csv", async (req, res) => {
   }
 });
 
-// EMAIL CSV
+// Email inventory CSV
 router.post("/email/inventory", async (req, res) => {
   try {
     const to = cleanStr(req.body?.to);

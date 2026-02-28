@@ -1,49 +1,44 @@
+// Backend/utils/mailer.js
 const nodemailer = require("nodemailer");
 
-function boolEnv(v, fallback = false) {
-  if (v === undefined || v === null || v === "") return fallback;
-  return String(v).toLowerCase() === "true";
+function requireEnv(name) {
+  if (!process.env[name]) {
+    throw new Error(`Missing environment variable: ${name}`);
+  }
+  return process.env[name];
 }
 
-function createTransporter() {
-  const host = process.env.SMTP_HOST;
-  const port = Number(process.env.SMTP_PORT || 465);
-  const secure = boolEnv(process.env.SMTP_SECURE, true);
-
-  if (!host) throw new Error("SMTP_HOST is not set");
-  if (!process.env.SMTP_USER) throw new Error("SMTP_USER is not set");
-  if (!process.env.SMTP_PASS) throw new Error("SMTP_PASS is not set");
+function createTransport() {
+  const host = requireEnv("SMTP_HOST");
+  const port = Number(requireEnv("SMTP_PORT"));
+  const user = requireEnv("SMTP_USER");
+  const pass = requireEnv("SMTP_PASS");
 
   return nodemailer.createTransport({
     host,
     port,
-    secure,
-    auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
-    tls: { rejectUnauthorized: false },
-    connectionTimeout: 20000,
-    greetingTimeout: 20000,
-    socketTimeout: 30000
+    secure: port === 465,
+    auth: { user, pass },
   });
 }
 
-async function sendMailWithAttachment({ to, subject, text, filename, content }) {
-  const transporter = createTransporter();
+async function sendMailWithAttachment({ to, subject, text, filename, content, contentType }) {
   const from = process.env.MAIL_FROM || process.env.SMTP_USER;
 
-  try {
-    await transporter.sendMail({
-      from,
-      to,
-      subject,
-      text,
-      attachments: [{ filename, content }]
-    });
-  } catch (err) {
-    const msg = err?.response
-      ? `${err.message} | SMTP: ${err.response}`
-      : (err?.message || "Failed to send email");
-    throw new Error(msg);
-  }
+  const transporter = createTransport();
+  await transporter.sendMail({
+    from,
+    to,
+    subject,
+    text,
+    attachments: [
+      {
+        filename,
+        content,
+        contentType: contentType || "application/octet-stream",
+      },
+    ],
+  });
 }
 
 module.exports = { sendMailWithAttachment };
