@@ -1,7 +1,7 @@
 // ======================
 // CONFIG
 // ======================
-const API_BASE = "http://localhost:5000"; // <-- CHANGE to hosted backend
+const API_BASE = "https://sea-bite-express.onrender.com";
 
 // ======================
 // IndexedDB (Offline Queue + Cache)
