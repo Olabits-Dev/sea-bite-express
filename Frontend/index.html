@@ -87,12 +87,12 @@
   <h2>All Records</h2>
   <div class="table-wrap">
     <table class="records-table finance-table">
-      <!-- Stable widths to prevent overlay -->
       <colgroup>
         <col style="width: 90px" />
         <col style="width: 140px" />
         <col />
-        <col style="width: 260px" />
+        <col style="width: 240px" />
+        <col style="width: 200px" />
         <col style="width: 220px" />
       </colgroup>
 
@@ -102,6 +102,7 @@
           <th>Amount</th>
           <th>Description</th>
           <th>Products Used</th>
+          <th>Date & Time</th>
           <th class="action-col">Action</th>
         </tr>
       </thead>
@@ -122,6 +123,7 @@
       <input type="text" id="pUnit" placeholder="Unit (e.g. pcs, kg)" />
       <input type="number" id="pReorder" placeholder="Reorder level" inputmode="numeric" />
       <button type="button" onclick="addProduct()">Add Product</button>
+      <p class="hint">You’ll be asked for an initial quantity — it will be recorded as Stock IN automatically.</p>
     </div>
 
     <div class="form-section">

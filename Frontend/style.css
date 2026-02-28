@@ -4,7 +4,6 @@
    inventory UI, finance+inventory email rows, sale product select,
    topbar/statusbar, and mobile fixes.
    ========================= */
-
 * { box-sizing: border-box; }
 
 :root{
@@ -95,12 +94,12 @@ button:hover{ background:var(--primaryHover); }
   overflow-x:auto; margin-top:12px;
 }
 
-/* Tables: overlay fix */
+/* Tables: stable layout */
 .records-table{
   width:100%;
-  min-width: 980px;
+  min-width: 1100px;
   border-collapse: collapse;
-  table-layout: fixed; /* key */
+  table-layout: fixed;
 }
 
 .records-table th, .records-table td{
@@ -108,8 +107,7 @@ button:hover{ background:var(--primaryHover); }
   border:1px solid #ddd;
   font-size:.95rem;
   vertical-align: middle;
-
-  overflow: hidden;           /* prevents overlay */
+  overflow: hidden;
   text-overflow: ellipsis;
 }
 
@@ -120,11 +118,19 @@ button:hover{ background:var(--primaryHover); }
 
 .records-table td{ white-space: nowrap; }
 
-/* allow wrapping in long text columns */
+/* wrap long text columns */
 .finance-table td:nth-child(3),
 .finance-table td:nth-child(4){
   white-space: normal;
   overflow-wrap: anywhere;
+}
+
+/* NEW: Date/Time column wrap */
+.finance-table td:nth-child(5){
+  white-space: normal;
+  overflow-wrap: anywhere;
+  font-size: 0.9rem;
+  opacity: 0.92;
 }
 
 .action-col{ text-align:center; }

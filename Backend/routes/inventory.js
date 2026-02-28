@@ -1,189 +1,291 @@
+// backend/routes/inventory.js
 const express = require("express");
-const db = require("../db");
-const { sendMailWithAttachment } = require("../utils/mailer");
-
 const router = express.Router();
 
-function run(sql, params = []) {
-  return new Promise((resolve, reject) => {
-    db.run(sql, params, function (err) {
-      if (err) reject(err);
-      else resolve({ lastID: this.lastID, changes: this.changes });
-    });
-  });
-}
-function all(sql, params = []) {
-  return new Promise((resolve, reject) => {
-    db.all(sql, params, (err, rows) => (err ? reject(err) : resolve(rows)));
-  });
-}
-function get(sql, params = []) {
-  return new Promise((resolve, reject) => {
-    db.get(sql, params, (err, row) => (err ? reject(err) : resolve(row)));
-  });
+// These helpers assume you already have db + run/get/all in your project.
+// If your project exports db differently, adjust the imports below.
+const { db, run, get, all } = require("../db");
+const { sendMailWithAttachment } = require("../utils/mailer");
+
+// --------------------------
+// Helpers
+// --------------------------
+function toNumber(v, fallback = 0) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : fallback;
 }
 
-function okQty(n) { return Number.isFinite(n) && n > 0; }
+function cleanStr(v, fallback = "") {
+  const s = String(v ?? fallback).trim();
+  return s;
+}
 
-// LIST PRODUCTS
-router.get("/products", async (_req, res) => {
+function csvEscape(value) {
+  const s = String(value ?? "");
+  // wrap in quotes if contains comma, quote, newline
+  if (/[",\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+  return s;
+}
+
+function buildInventoryCsv(rows) {
+  let csv = "";
+  csv += "INVENTORY REPORT\n";
+  csv += `Generated On,${csvEscape(new Date().toLocaleString())}\n\n`;
+  csv += "ID,Name,SKU,Unit,Qty,Reorder Level,Updated At\n";
+
+  for (const r of rows) {
+    csv += [
+      csvEscape(r.id),
+      csvEscape(r.name),
+      csvEscape(r.sku || ""),
+      csvEscape(r.unit || ""),
+      csvEscape(r.qty ?? 0),
+      csvEscape(r.reorder_level ?? 0),
+      csvEscape(r.updated_at || "")
+    ].join(",") + "\n";
+  }
+
+  return csv;
+}
+
+// --------------------------
+// ROUTES
+// --------------------------
+
+// GET all products
+router.get("/products", async (req, res) => {
   try {
-    const rows = await all(`SELECT * FROM products ORDER BY datetime(updated_at) DESC LIMIT 1000`);
+    const rows = await all(
+      `SELECT id, name, sku, unit, qty, reorder_level, updated_at
+       FROM products
+       ORDER BY datetime(updated_at) DESC, id DESC`
+    );
     res.json(rows);
-  } catch {
-    res.status(500).json({ error: "Failed to fetch products" });
+  } catch (e) {
+    res.status(500).json({ error: e.message || "Failed to fetch products" });
   }
 });
 
-// CREATE PRODUCT
+// GET one product
+router.get("/products/:id", async (req, res) => {
+  try {
+    const id = toNumber(req.params.id);
+    const row = await get(
+      `SELECT id, name, sku, unit, qty, reorder_level, updated_at
+       FROM products WHERE id=?`,
+      [id]
+    );
+    if (!row) return res.status(404).json({ error: "Product not found" });
+    res.json(row);
+  } catch (e) {
+    res.status(500).json({ error: e.message || "Failed to fetch product" });
+  }
+});
+
+// CREATE PRODUCT (MERGED: supports initial_qty and auto Stock IN record)
 router.post("/products", async (req, res) => {
   try {
-    const name = String(req.body?.name || "").trim();
-    const sku = String(req.body?.sku || "").trim();
-    const unit = String(req.body?.unit || "pcs").trim() || "pcs";
-    const reorder_level = Number(req.body?.reorder_level || 0);
+    const name = cleanStr(req.body?.name);
+    const sku = cleanStr(req.body?.sku);
+    const unit = cleanStr(req.body?.unit || "pcs") || "pcs";
+    const reorder_level = toNumber(req.body?.reorder_level, 0);
+    const initial_qty = toNumber(req.body?.initial_qty, 0);
 
     if (!name) return res.status(400).json({ error: "Product name is required" });
+    if (!Number.isFinite(initial_qty) || initial_qty < 0) {
+      return res.status(400).json({ error: "initial_qty must be 0 or more" });
+    }
 
-    const r = await run(
-      `INSERT INTO products (name, sku, unit, qty, reorder_level) VALUES (?, ?, ?, 0, ?)`,
-      [name, sku, unit, reorder_level]
-    );
+    db.serialize(() => {
+      db.run("BEGIN TRANSACTION");
+      (async () => {
+        try {
+          const insert = await run(
+            `INSERT INTO products (name, sku, unit, qty, reorder_level, updated_at)
+             VALUES (?, ?, ?, ?, ?, datetime('now'))`,
+            [name, sku, unit, initial_qty || 0, reorder_level]
+          );
 
-    const row = await get(`SELECT * FROM products WHERE id=?`, [r.lastID]);
-    res.json(row);
-  } catch {
-    res.status(500).json({ error: "Failed to create product" });
+          const productId = insert.lastID;
+
+          // Auto Stock IN movement for initial qty
+          if (initial_qty > 0) {
+            await run(
+              `INSERT INTO stock_movements (product_id, type, qty, note, created_at)
+               VALUES (?, 'IN', ?, ?, datetime('now'))`,
+              [productId, initial_qty, "Initial Stock IN on product creation"]
+            );
+          }
+
+          await run("COMMIT");
+
+          const row = await get(
+            `SELECT id, name, sku, unit, qty, reorder_level, updated_at
+             FROM products WHERE id=?`,
+            [productId]
+          );
+          res.json(row);
+        } catch (e) {
+          try { await run("ROLLBACK"); } catch {}
+          res.status(500).json({ error: e.message || "Failed to create product" });
+        }
+      })();
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message || "Failed to create product" });
   }
 });
 
-// UPDATE PRODUCT (not qty)
+// UPDATE PRODUCT
 router.put("/products/:id", async (req, res) => {
   try {
-    const id = Number(req.params.id);
-    const name = String(req.body?.name || "").trim();
-    const sku = String(req.body?.sku || "").trim();
-    const unit = String(req.body?.unit || "pcs").trim() || "pcs";
-    const reorder_level = Number(req.body?.reorder_level || 0);
+    const id = toNumber(req.params.id);
+    const name = cleanStr(req.body?.name);
+    const sku = cleanStr(req.body?.sku);
+    const unit = cleanStr(req.body?.unit || "pcs") || "pcs";
+    const reorder_level = toNumber(req.body?.reorder_level, 0);
 
     if (!name) return res.status(400).json({ error: "Product name is required" });
 
-    const ex = await get(`SELECT * FROM products WHERE id=?`, [id]);
-    if (!ex) return res.status(404).json({ error: "Product not found" });
+    const existing = await get(`SELECT id FROM products WHERE id=?`, [id]);
+    if (!existing) return res.status(404).json({ error: "Product not found" });
 
     await run(
-      `UPDATE products SET name=?, sku=?, unit=?, reorder_level=?, updated_at=datetime('now') WHERE id=?`,
+      `UPDATE products
+       SET name=?, sku=?, unit=?, reorder_level=?, updated_at=datetime('now')
+       WHERE id=?`,
       [name, sku, unit, reorder_level, id]
     );
 
-    const row = await get(`SELECT * FROM products WHERE id=?`, [id]);
+    const row = await get(
+      `SELECT id, name, sku, unit, qty, reorder_level, updated_at
+       FROM products WHERE id=?`,
+      [id]
+    );
+
     res.json(row);
-  } catch {
-    res.status(500).json({ error: "Failed to update product" });
+  } catch (e) {
+    res.status(500).json({ error: e.message || "Failed to update product" });
   }
 });
 
 // DELETE PRODUCT
 router.delete("/products/:id", async (req, res) => {
   try {
-    const id = Number(req.params.id);
+    const id = toNumber(req.params.id);
+
+    const existing = await get(`SELECT id FROM products WHERE id=?`, [id]);
+    if (!existing) return res.status(404).json({ error: "Product not found" });
+
+    // remove movements first (if you have FK constraints)
+    await run(`DELETE FROM stock_movements WHERE product_id=?`, [id]);
     await run(`DELETE FROM products WHERE id=?`, [id]);
+
     res.json({ ok: true });
-  } catch {
-    res.status(500).json({ error: "Failed to delete product" });
+  } catch (e) {
+    res.status(500).json({ error: e.message || "Failed to delete product" });
   }
 });
 
-// STOCK MOVE
+// STOCK MOVE: IN / OUT
 router.post("/products/:id/move", async (req, res) => {
-  const id = Number(req.params.id);
-  const type = String(req.body?.type || "").toUpperCase();
-  const qty = Number(req.body?.qty);
-  const note = String(req.body?.note || "").trim();
+  try {
+    const id = toNumber(req.params.id);
+    const type = cleanStr(req.body?.type).toUpperCase(); // IN | OUT
+    const qty = toNumber(req.body?.qty, 0);
+    const note = cleanStr(req.body?.note);
 
-  if (!["IN", "OUT"].includes(type)) return res.status(400).json({ error: "type must be IN or OUT" });
-  if (!okQty(qty)) return res.status(400).json({ error: "qty must be > 0" });
+    if (!["IN", "OUT"].includes(type)) {
+      return res.status(400).json({ error: "type must be IN or OUT" });
+    }
+    if (!Number.isFinite(qty) || qty <= 0) {
+      return res.status(400).json({ error: "qty must be greater than 0" });
+    }
 
-  db.serialize(() => {
-    db.run("BEGIN TRANSACTION");
-    (async () => {
-      try {
-        const product = await get(`SELECT * FROM products WHERE id=?`, [id]);
-        if (!product) throw new Error("Product not found");
+    const product = await get(`SELECT id, qty FROM products WHERE id=?`, [id]);
+    if (!product) return res.status(404).json({ error: "Product not found" });
 
-        const newQty = type === "IN" ? Number(product.qty) + qty : Number(product.qty) - qty;
-        if (newQty < 0) throw new Error("Insufficient stock");
+    const currentQty = toNumber(product.qty, 0);
+    const newQty = type === "IN" ? currentQty + qty : currentQty - qty;
 
-        await run(
-          `INSERT INTO stock_movements (product_id, type, qty, note) VALUES (?, ?, ?, ?)`,
-          [id, type, qty, note || null]
-        );
+    if (newQty < 0) return res.status(400).json({ error: "Insufficient stock" });
 
-        await run(`UPDATE products SET qty=?, updated_at=datetime('now') WHERE id=?`, [newQty, id]);
+    db.serialize(() => {
+      db.run("BEGIN TRANSACTION");
+      (async () => {
+        try {
+          await run(
+            `INSERT INTO stock_movements (product_id, type, qty, note, created_at)
+             VALUES (?, ?, ?, ?, datetime('now'))`,
+            [id, type, qty, note]
+          );
 
-        await run("COMMIT");
+          await run(
+            `UPDATE products SET qty=?, updated_at=datetime('now') WHERE id=?`,
+            [newQty, id]
+          );
 
-        const updated = await get(`SELECT * FROM products WHERE id=?`, [id]);
-        res.json(updated);
-      } catch (e) {
-        await run("ROLLBACK");
-        res.status(400).json({ error: e.message || "Failed to move stock" });
-      }
-    })();
-  });
+          await run("COMMIT");
+
+          const row = await get(
+            `SELECT id, name, sku, unit, qty, reorder_level, updated_at
+             FROM products WHERE id=?`,
+            [id]
+          );
+
+          res.json(row);
+        } catch (e) {
+          try { await run("ROLLBACK"); } catch {}
+          res.status(500).json({ error: e.message || "Failed to move stock" });
+        }
+      })();
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message || "Failed to move stock" });
+  }
 });
 
 // EXPORT INVENTORY CSV
-router.get("/export/inventory.csv", async (_req, res) => {
+router.get("/export/inventory.csv", async (req, res) => {
   try {
-    const rows = await all(`SELECT name, sku, unit, qty, reorder_level, updated_at FROM products ORDER BY name ASC`);
+    const rows = await all(
+      `SELECT id, name, sku, unit, qty, reorder_level, updated_at
+       FROM products
+       ORDER BY datetime(updated_at) DESC, id DESC`
+    );
 
-    let csv = "";
-    csv += "INVENTORY REPORT\n";
-    csv += `Generated On:,${new Date().toLocaleString()}\n\n`;
-    csv += "Name,SKU,Unit,Qty,Reorder Level,Last Updated\n";
-
-    rows.forEach(r => {
-      const name = String(r.name || "").replaceAll('"', '""');
-      const sku = String(r.sku || "").replaceAll('"', '""');
-      const unit = String(r.unit || "").replaceAll('"', '""');
-      csv += `"${name}","${sku}","${unit}",${Number(r.qty) || 0},${Number(r.reorder_level) || 0},"${new Date(r.updated_at).toLocaleString()}"\n`;
-    });
+    const csv = buildInventoryCsv(rows);
 
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
-    res.setHeader("Content-Disposition", `attachment; filename=inventory-${new Date().toISOString().split("T")[0]}.csv`);
+    res.setHeader("Content-Disposition", `attachment; filename="inventory-${new Date().toISOString().slice(0,10)}.csv"`);
     res.send(csv);
-  } catch {
-    res.status(500).json({ error: "Failed to export inventory CSV" });
+  } catch (e) {
+    res.status(500).json({ error: e.message || "Failed to export inventory CSV" });
   }
 });
 
 // EMAIL INVENTORY CSV
 router.post("/email/inventory", async (req, res) => {
   try {
-    const to = String(req.body?.to || "").trim();
+    const to = cleanStr(req.body?.to);
     if (!to) return res.status(400).json({ error: "Recipient email is required" });
 
-    const rows = await all(`SELECT name, sku, unit, qty, reorder_level, updated_at FROM products ORDER BY name ASC`);
+    const rows = await all(
+      `SELECT id, name, sku, unit, qty, reorder_level, updated_at
+       FROM products
+       ORDER BY datetime(updated_at) DESC, id DESC`
+    );
 
-    let csv = "";
-    csv += "INVENTORY REPORT\n";
-    csv += `Generated On:,${new Date().toLocaleString()}\n\n`;
-    csv += "Name,SKU,Unit,Qty,Reorder Level,Last Updated\n";
-
-    rows.forEach(r => {
-      const name = String(r.name || "").replaceAll('"', '""');
-      const sku = String(r.sku || "").replaceAll('"', '""');
-      const unit = String(r.unit || "").replaceAll('"', '""');
-      csv += `"${name}","${sku}","${unit}",${Number(r.qty) || 0},${Number(r.reorder_level) || 0},"${new Date(r.updated_at).toLocaleString()}"\n`;
-    });
+    const csv = buildInventoryCsv(rows);
+    const filename = `inventory-${new Date().toISOString().slice(0,10)}.csv`;
 
     await sendMailWithAttachment({
       to,
-      subject: "Inventory Report",
-      text: "Attached is your inventory report.",
-      filename: `inventory-${new Date().toISOString().split("T")[0]}.csv`,
-      content: csv
+      subject: "Inventory Report (CSV)",
+      text: "Attached is your inventory report in CSV format.",
+      filename,
+      content: csv,
+      contentType: "text/csv"
     });
 
     res.json({ ok: true });

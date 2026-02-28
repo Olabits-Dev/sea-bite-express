@@ -102,6 +102,13 @@ function formatCurrency(amount) {
   return new Intl.NumberFormat("en-NG", { style: "currency", currency: "NGN" }).format(Number(amount) || 0);
 }
 
+function formatDateTime(value) {
+  if (!value) return "";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return String(value);
+  return d.toLocaleString();
+}
+
 function isValidAmount(n) { return Number.isFinite(n) && n > 0; }
 function isValidQty(n) { return Number.isFinite(n) && n > 0; }
 
@@ -315,16 +322,14 @@ async function addSale() {
     return;
   }
 
-  // Ask to record usage if inventory exists and none selected
   if (products.length && pendingUsage.length === 0) {
     const ok = confirm("Do you want to record products used for this sale? (Recommended)");
     if (ok) {
       openUsageModal();
-      return; // user saves usage then clicks Add Sale again
+      return;
     }
   }
 
-  // Offline stock validation
   for (const it of pendingUsage) {
     const p = products.find(x => Number(x.id) === Number(it.product_id));
     if (p && Number(p.qty) - Number(it.qty_used) < 0) {
@@ -333,7 +338,6 @@ async function addSale() {
     }
   }
 
-  // Optimistic local sale
   const tempId = `tmp-${Date.now()}`;
   const saleTemp = {
     id: tempId,
@@ -354,7 +358,6 @@ async function addSale() {
   sales.unshift(saleTemp);
   await idbPut("sales", saleTemp);
 
-  // Optimistic stock deduction
   for (const it of pendingUsage) {
     const p = products.find(x => Number(x.id) === Number(it.product_id));
     if (p) {
@@ -367,7 +370,6 @@ async function addSale() {
   renderFinanceTable();
   renderProductsTable();
 
-  // reset sale form
   setVal("saleAmount", "");
   setVal("saleDesc", "");
   pendingUsage = [];
@@ -386,7 +388,6 @@ async function addSale() {
     }
   });
 
-  // If online and fail: revert optimistic
   if (navigator.onLine && !result.ok) {
     alert(`Sale failed: ${result.error}`);
 
@@ -443,11 +444,9 @@ async function deleteRecord(id, type) {
 
   if (type === "Sale") {
     const sale = sales.find(s => String(s.id) === String(id));
-
     sales = sales.filter(s => String(s.id) !== String(id));
     await idbDelete("sales", id);
 
-    // revert locally if had items
     if (sale?.items?.length) {
       for (const it of sale.items) {
         const p = products.find(x => Number(x.id) === Number(it.product_id));
@@ -522,7 +521,6 @@ async function editRecord(id, type) {
     return;
   }
 
-  // expense
   const rec = expenses.find(x => String(x.id) === String(id));
   if (!rec) return alert("Record not found.");
 
@@ -590,6 +588,7 @@ function renderFinanceTable() {
         <td>${formatCurrency(item.amount)}</td>
         <td>${item.desc}</td>
         <td>${item.used}</td>
+        <td>${formatDateTime(item.date)}</td>
         <td>
           <div class="action-buttons">
             <button class="edit-btn" type="button" onclick="editRecord('${item.id}','${item.type}')">Edit</button>
@@ -660,7 +659,7 @@ async function emailFinanceCSV() {
 }
 
 // ======================
-// Inventory CRUD + Stock movement + CSV + Email
+// Inventory CRUD (ask initial qty -> backend records Stock IN)
 // ======================
 async function addProduct() {
   const name = getVal("pName").trim();
@@ -670,10 +669,15 @@ async function addProduct() {
 
   if (!name) return alert("Product name is required.");
 
+  const initialQtyRaw = prompt("Initial quantity to Stock IN now?", "0");
+  if (initialQtyRaw === null) return;
+  const initial_qty = Number(initialQtyRaw);
+  if (initial_qty < 0 || Number.isNaN(initial_qty)) return alert("Initial quantity must be 0 or more.");
+
   const temp = {
     id: `tmp-${Date.now()}`,
     name, sku, unit,
-    qty: 0,
+    qty: initial_qty || 0,
     reorder_level,
     updated_at: new Date().toISOString()
   };
@@ -692,7 +696,10 @@ async function addProduct() {
   const result = await apiOrQueue({
     kind: "product_create",
     path: "/api/inventory/products",
-    options: { method: "POST", body: JSON.stringify({ name, sku, unit, reorder_level }) }
+    options: {
+      method: "POST",
+      body: JSON.stringify({ name, sku, unit, reorder_level, initial_qty })
+    }
   });
 
   if (navigator.onLine && !result.ok) {
@@ -738,7 +745,6 @@ async function deleteProduct(id) {
   products = products.filter(x => String(x.id) !== String(id));
   await idbDelete("products", id);
 
-  // also remove from pending usage if present
   pendingUsage = pendingUsage.filter(x => String(x.product_id) !== String(id));
 
   renderProductsTable();
@@ -767,12 +773,10 @@ async function stockMove(productId, type) {
 
   const note = prompt("Note (optional):", "") ?? "";
 
-  // offline validation
   if (type === "OUT" && Number(p.qty) - qty < 0) {
     return alert("Insufficient stock.");
   }
 
-  // optimistic local update
   if (type === "IN") p.qty = Number(p.qty) + qty;
   else p.qty = Number(p.qty) - qty;
 
@@ -887,7 +891,7 @@ window.addEventListener("online", async () => { setNetUI(); await flushQueue(); 
 window.addEventListener("offline", () => setNetUI());
 
 // ======================
-// PWA Install
+// PWA Install + Auto-update
 // ======================
 window.addEventListener("beforeinstallprompt", (e) => {
   e.preventDefault();
@@ -903,7 +907,16 @@ $("installBtn")?.addEventListener("click", () => {
 });
 
 if ("serviceWorker" in navigator) {
-  navigator.serviceWorker.register("service-worker.js");
+  navigator.serviceWorker.register("service-worker.js").then((reg) => {
+    let refreshing = false;
+    navigator.serviceWorker.addEventListener("controllerchange", () => {
+      if (refreshing) return;
+      refreshing = true;
+      window.location.reload();
+    });
+
+    reg.update().catch(() => {});
+  });
 }
 
 // Initial
