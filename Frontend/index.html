@@ -13,7 +13,15 @@
 <body>
   <h1>SeaBite Express Business Report Dashboard</h1>
 
-  <button id="installBtn" style="display:none;">Install App</button>
+  <div class="topbar">
+    <button id="installBtn" style="display:none;">Install App</button>
+    <button id="syncBtn" type="button">Sync Now</button>
+  </div>
+
+  <div class="statusbar">
+    <span id="netStatus">Status: Checking...</span>
+    <span id="queueStatus">Pending: 0</span>
+  </div>
 
   <!-- Forms -->
   <div class="grid">
@@ -44,9 +52,14 @@
       <button type="button" onclick="exportCSV()">Export CSV</button>
     </div>
 
+    <div class="email-row">
+      <input type="email" id="financeEmail" placeholder="Send finance CSV to email (e.g. client@gmail.com)" />
+      <button type="button" onclick="emailFinanceCSV()">Send</button>
+    </div>
+
     <div id="reportResult"></div>
 
-    <!-- SUPER-LIGHT CHART (NO LIBRARY) -->
+    <!-- Super-light visual -->
     <div class="mini-chart" id="miniChart" style="display:none;">
       <div class="mini-chart-header">
         <span>Sales vs Expenses</span>
@@ -56,17 +69,13 @@
       <div class="mini-bars">
         <div class="mini-bar-row">
           <div class="mini-bar-label">Sales</div>
-          <div class="mini-bar-track">
-            <div class="mini-bar-fill sales" id="salesBar"></div>
-          </div>
+          <div class="mini-bar-track"><div class="mini-bar-fill sales" id="salesBar"></div></div>
           <div class="mini-bar-value" id="salesValue"></div>
         </div>
 
         <div class="mini-bar-row">
           <div class="mini-bar-label">Expenses</div>
-          <div class="mini-bar-track">
-            <div class="mini-bar-fill expenses" id="expensesBar"></div>
-          </div>
+          <div class="mini-bar-track"><div class="mini-bar-fill expenses" id="expensesBar"></div></div>
           <div class="mini-bar-value" id="expensesValue"></div>
         </div>
       </div>
@@ -74,8 +83,6 @@
   </div>
 
   <h2>All Records</h2>
-
-  <!-- Table wrapper for mobile scroll -->
   <div class="table-wrap">
     <table class="records-table">
       <thead>
@@ -88,6 +95,49 @@
         </tr>
       </thead>
       <tbody id="recordTable"></tbody>
+    </table>
+  </div>
+
+  <!-- Inventory -->
+  <div class="section-title">
+    <h2>Inventory</h2>
+    <p class="muted">Works offline and syncs automatically</p>
+  </div>
+
+  <div class="grid">
+    <div class="form-section">
+      <h2>Add Product</h2>
+      <input type="text" id="pName" placeholder="Product name" />
+      <input type="text" id="pSku" placeholder="SKU (optional)" />
+      <input type="text" id="pUnit" placeholder="Unit (e.g. pcs, kg)" />
+      <input type="number" id="pReorder" placeholder="Reorder level" inputmode="numeric" />
+      <button type="button" onclick="addProduct()">Add Product</button>
+    </div>
+
+    <div class="form-section">
+      <h2>Inventory Report</h2>
+      <input type="email" id="invEmail" placeholder="Send inventory CSV to email" />
+      <div class="report-actions">
+        <button type="button" onclick="downloadInventoryCSV()">Download Inventory CSV</button>
+        <button type="button" onclick="emailInventoryCSV()">Email Inventory CSV</button>
+      </div>
+      <div id="invStatus" class="status"></div>
+    </div>
+  </div>
+
+  <div class="table-wrap">
+    <table class="records-table inventory-table">
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>SKU</th>
+          <th>Unit</th>
+          <th>Qty</th>
+          <th>Reorder</th>
+          <th class="action-col">Action</th>
+        </tr>
+      </thead>
+      <tbody id="productsTable"></tbody>
     </table>
   </div>
 
