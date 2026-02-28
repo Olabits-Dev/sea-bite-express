@@ -1,4 +1,4 @@
-const CACHE_NAME = "seabite-frontend-cache-v40";
+const CACHE_NAME = "seabite-frontend-cache-v999";
 
 const urlsToCache = [
   "./",
