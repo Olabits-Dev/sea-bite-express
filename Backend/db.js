@@ -5,7 +5,6 @@ const dbPath = path.join(__dirname, "database.sqlite");
 const db = new sqlite3.Database(dbPath);
 
 db.serialize(() => {
-  // INVENTORY
   db.run(`
     CREATE TABLE IF NOT EXISTS products (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -31,13 +30,23 @@ db.serialize(() => {
     )
   `);
 
-  // FINANCE
   db.run(`
     CREATE TABLE IF NOT EXISTS sales (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       amount REAL NOT NULL,
       description TEXT NOT NULL,
       created_at TEXT DEFAULT (datetime('now'))
+    )
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS sale_items (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      sale_id INTEGER NOT NULL,
+      product_id INTEGER NOT NULL,
+      qty_used REAL NOT NULL,
+      FOREIGN KEY(sale_id) REFERENCES sales(id),
+      FOREIGN KEY(product_id) REFERENCES products(id)
     )
   `);
 

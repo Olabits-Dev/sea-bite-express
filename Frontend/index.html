@@ -23,13 +23,17 @@
     <span id="queueStatus">Pending: 0</span>
   </div>
 
-  <!-- Forms -->
   <div class="grid">
     <div class="form-section">
       <h2>Add Sale</h2>
       <input type="number" id="saleAmount" placeholder="Amount" inputmode="numeric" />
       <input type="text" id="saleDesc" placeholder="Description" />
+
+      <button type="button" onclick="openUsageModal()">Select Products Used</button>
+      <div class="usage-summary" id="usageSummary">No products selected.</div>
+
       <button type="button" onclick="addSale()">Add Sale</button>
+      <p class="hint">When you add a sale, selected product quantities will be deducted automatically.</p>
     </div>
 
     <div class="form-section">
@@ -40,7 +44,6 @@
     </div>
   </div>
 
-  <!-- Reports -->
   <div class="report-section">
     <h2>Reports</h2>
 
@@ -59,7 +62,6 @@
 
     <div id="reportResult"></div>
 
-    <!-- Super-light visual -->
     <div class="mini-chart" id="miniChart" style="display:none;">
       <div class="mini-chart-header">
         <span>Sales vs Expenses</span>
@@ -84,13 +86,22 @@
 
   <h2>All Records</h2>
   <div class="table-wrap">
-    <table class="records-table">
+    <table class="records-table finance-table">
+      <!-- Stable widths to prevent overlay -->
+      <colgroup>
+        <col style="width: 90px" />
+        <col style="width: 140px" />
+        <col />
+        <col style="width: 260px" />
+        <col style="width: 220px" />
+      </colgroup>
+
       <thead>
         <tr>
           <th>Type</th>
           <th>Amount</th>
           <th>Description</th>
-          <th>Date</th>
+          <th>Products Used</th>
           <th class="action-col">Action</th>
         </tr>
       </thead>
@@ -98,7 +109,6 @@
     </table>
   </div>
 
-  <!-- Inventory -->
   <div class="section-title">
     <h2>Inventory</h2>
     <p class="muted">Works offline and syncs automatically</p>
@@ -117,16 +127,26 @@
     <div class="form-section">
       <h2>Inventory Report</h2>
       <input type="email" id="invEmail" placeholder="Send inventory CSV to email" />
+
       <div class="report-actions">
         <button type="button" onclick="downloadInventoryCSV()">Download Inventory CSV</button>
         <button type="button" onclick="emailInventoryCSV()">Email Inventory CSV</button>
       </div>
+
       <div id="invStatus" class="status"></div>
     </div>
   </div>
 
   <div class="table-wrap">
     <table class="records-table inventory-table">
+      <colgroup>
+        <col />
+        <col style="width: 140px" />
+        <col style="width: 110px" />
+        <col style="width: 100px" />
+        <col style="width: 110px" />
+        <col style="width: 300px" />
+      </colgroup>
       <thead>
         <tr>
           <th>Name</th>
@@ -139,6 +159,25 @@
       </thead>
       <tbody id="productsTable"></tbody>
     </table>
+  </div>
+
+  <!-- Products Used Modal -->
+  <div class="modal" id="usageModal" aria-hidden="true">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3>Products Used (Stock Out)</h3>
+        <button type="button" class="modal-close" onclick="closeUsageModal()">✕</button>
+      </div>
+
+      <p class="modal-hint">Enter quantities used for any product. Leave 0 if not used.</p>
+
+      <div class="modal-body" id="usageList"></div>
+
+      <div class="modal-actions">
+        <button type="button" class="secondary-btn" onclick="clearUsage()">Clear</button>
+        <button type="button" onclick="saveUsage()">Save</button>
+      </div>
+    </div>
   </div>
 
   <script src="script.js"></script>

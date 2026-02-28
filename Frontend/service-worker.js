@@ -1,4 +1,4 @@
-const CACHE_NAME = "seabite-frontend-cache-v20";
+const CACHE_NAME = "seabite-frontend-cache-v40";
 
 const urlsToCache = [
   "./",
@@ -22,12 +22,9 @@ self.addEventListener("activate", (event) => {
 });
 
 self.addEventListener("fetch", (event) => {
-  // Only cache same-origin GET requests (static files)
   if (event.request.method !== "GET") return;
   const url = new URL(event.request.url);
   if (url.origin !== location.origin) return;
 
-  event.respondWith(
-    caches.match(event.request).then((resp) => resp || fetch(event.request))
-  );
+  event.respondWith(caches.match(event.request).then((resp) => resp || fetch(event.request)));
 });

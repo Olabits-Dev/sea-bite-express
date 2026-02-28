@@ -37,53 +37,181 @@ function startISO(period) {
   return s.toISOString();
 }
 function okAmount(n) { return Number.isFinite(n) && n > 0; }
+function okQty(n) { return Number.isFinite(n) && n > 0; }
 
-// SALES
+// LIST SALES (with items)
 router.get("/sales", async (_req, res) => {
   try {
-    const rows = await all(`SELECT * FROM sales ORDER BY datetime(created_at) DESC LIMIT 500`);
-    res.json(rows);
+    const sales = await all(`SELECT * FROM sales ORDER BY datetime(created_at) DESC LIMIT 500`);
+    const ids = sales.map(s => s.id);
+
+    let items = [];
+    if (ids.length) {
+      const placeholders = ids.map(() => "?").join(",");
+      items = await all(`
+        SELECT si.sale_id, si.product_id, si.qty_used,
+               p.name AS product_name, p.unit AS product_unit
+        FROM sale_items si
+        JOIN products p ON p.id = si.product_id
+        WHERE si.sale_id IN (${placeholders})
+      `, ids);
+    }
+
+    const map = new Map();
+    for (const s of sales) map.set(s.id, { ...s, items: [] });
+
+    for (const it of items) {
+      const t = map.get(it.sale_id);
+      if (t) t.items.push({
+        product_id: it.product_id,
+        product_name: it.product_name,
+        product_unit: it.product_unit,
+        qty_used: it.qty_used
+      });
+    }
+
+    res.json(Array.from(map.values()));
   } catch {
     res.status(500).json({ error: "Failed to fetch sales" });
   }
 });
-router.post("/sales", async (req, res) => {
-  try {
-    const amount = Number(req.body?.amount);
-    const description = String(req.body?.description || "").trim();
-    if (!okAmount(amount) || !description) return res.status(400).json({ error: "Valid amount and description required" });
 
-    const r = await run(`INSERT INTO sales (amount, description) VALUES (?, ?)`, [amount, description]);
-    const row = await get(`SELECT * FROM sales WHERE id=?`, [r.lastID]);
-    res.json(row);
-  } catch {
-    res.status(500).json({ error: "Failed to create sale" });
+// CREATE SALE + STOCK OUT per item
+router.post("/sales", async (req, res) => {
+  const amount = Number(req.body?.amount);
+  const description = String(req.body?.description || "").trim();
+  const items = Array.isArray(req.body?.items) ? req.body.items : [];
+
+  if (!okAmount(amount) || !description) {
+    return res.status(400).json({ error: "Valid amount (>0) and description required" });
   }
+
+  for (const it of items) {
+    const pid = Number(it.product_id);
+    const qty = Number(it.qty_used);
+    if (!Number.isFinite(pid) || pid <= 0) return res.status(400).json({ error: "Invalid product_id in items" });
+    if (!okQty(qty)) return res.status(400).json({ error: "qty_used must be > 0 in items" });
+  }
+
+  db.serialize(() => {
+    db.run("BEGIN TRANSACTION");
+    (async () => {
+      try {
+        // Validate stock
+        for (const it of items) {
+          const pid = Number(it.product_id);
+          const qty = Number(it.qty_used);
+          const product = await get(`SELECT * FROM products WHERE id=?`, [pid]);
+          if (!product) throw new Error(`Product not found (ID ${pid})`);
+          if (Number(product.qty) - qty < 0) throw new Error(`Insufficient stock for ${product.name}`);
+        }
+
+        const r = await run(`INSERT INTO sales (amount, description) VALUES (?, ?)`, [amount, description]);
+        const saleId = r.lastID;
+
+        for (const it of items) {
+          const pid = Number(it.product_id);
+          const qty = Number(it.qty_used);
+
+          await run(`INSERT INTO sale_items (sale_id, product_id, qty_used) VALUES (?, ?, ?)`, [saleId, pid, qty]);
+
+          await run(
+            `INSERT INTO stock_movements (product_id, type, qty, note) VALUES (?, 'OUT', ?, ?)`,
+            [pid, qty, `Auto OUT for Sale #${saleId}`]
+          );
+
+          const product = await get(`SELECT * FROM products WHERE id=?`, [pid]);
+          const newQty = Number(product.qty) - qty;
+          await run(`UPDATE products SET qty=?, updated_at=datetime('now') WHERE id=?`, [newQty, pid]);
+        }
+
+        await run("COMMIT");
+
+        const sale = await get(`SELECT * FROM sales WHERE id=?`, [saleId]);
+        const saleItems = await all(`
+          SELECT si.product_id, si.qty_used, p.name AS product_name, p.unit AS product_unit
+          FROM sale_items si
+          JOIN products p ON p.id = si.product_id
+          WHERE si.sale_id=?
+        `, [saleId]);
+
+        res.json({ ...sale, items: saleItems });
+      } catch (e) {
+        await run("ROLLBACK");
+        res.status(400).json({ error: e.message || "Failed to create sale" });
+      }
+    })();
+  });
 });
+
+// UPDATE sale (amount/description only)
 router.put("/sales/:id", async (req, res) => {
   try {
     const id = Number(req.params.id);
     const amount = Number(req.body?.amount);
     const description = String(req.body?.description || "").trim();
+
     if (!okAmount(amount) || !description) return res.status(400).json({ error: "Valid amount and description required" });
 
     const ex = await get(`SELECT * FROM sales WHERE id=?`, [id]);
     if (!ex) return res.status(404).json({ error: "Sale not found" });
 
     await run(`UPDATE sales SET amount=?, description=? WHERE id=?`, [amount, description, id]);
-    const row = await get(`SELECT * FROM sales WHERE id=?`, [id]);
-    res.json(row);
+
+    const sale = await get(`SELECT * FROM sales WHERE id=?`, [id]);
+    const saleItems = await all(`
+      SELECT si.product_id, si.qty_used, p.name AS product_name, p.unit AS product_unit
+      FROM sale_items si
+      JOIN products p ON p.id = si.product_id
+      WHERE si.sale_id=?
+    `, [id]);
+
+    res.json({ ...sale, items: saleItems });
   } catch {
     res.status(500).json({ error: "Failed to update sale" });
   }
 });
+
+// DELETE sale (revert stock for each item)
 router.delete("/sales/:id", async (req, res) => {
-  try {
-    await run(`DELETE FROM sales WHERE id=?`, [Number(req.params.id)]);
-    res.json({ ok: true });
-  } catch {
-    res.status(500).json({ error: "Failed to delete sale" });
-  }
+  const id = Number(req.params.id);
+
+  db.serialize(() => {
+    db.run("BEGIN TRANSACTION");
+    (async () => {
+      try {
+        const sale = await get(`SELECT * FROM sales WHERE id=?`, [id]);
+        if (!sale) throw new Error("Sale not found");
+
+        const items = await all(`SELECT * FROM sale_items WHERE sale_id=?`, [id]);
+
+        for (const it of items) {
+          const pid = Number(it.product_id);
+          const qty = Number(it.qty_used);
+
+          const product = await get(`SELECT * FROM products WHERE id=?`, [pid]);
+          if (product) {
+            await run(
+              `INSERT INTO stock_movements (product_id, type, qty, note) VALUES (?, 'IN', ?, ?)`,
+              [pid, qty, `Revert IN for deleted Sale #${id}`]
+            );
+
+            const newQty = Number(product.qty) + qty;
+            await run(`UPDATE products SET qty=?, updated_at=datetime('now') WHERE id=?`, [newQty, pid]);
+          }
+        }
+
+        await run(`DELETE FROM sale_items WHERE sale_id=?`, [id]);
+        await run(`DELETE FROM sales WHERE id=?`, [id]);
+
+        await run("COMMIT");
+        res.json({ ok: true });
+      } catch (e) {
+        await run("ROLLBACK");
+        res.status(400).json({ error: e.message || "Failed to delete sale" });
+      }
+    })();
+  });
 });
 
 // EXPENSES
@@ -134,7 +262,7 @@ router.delete("/expenses/:id", async (req, res) => {
   }
 });
 
-// REPORT SUMMARY
+// REPORT
 router.get("/report", async (req, res) => {
   try {
     const period = parsePeriod(req.query.period);
@@ -153,16 +281,38 @@ router.get("/report", async (req, res) => {
   }
 });
 
-// EXPORT CSV
+// EXPORT CSV (includes Products Used)
 router.get("/export/finance.csv", async (req, res) => {
   try {
     const period = parsePeriod(req.query.period);
     const from = startISO(period);
 
-    const sales = await all(
-      `SELECT amount, description, created_at FROM sales WHERE datetime(created_at) >= datetime(?) ORDER BY datetime(created_at) DESC`,
-      [from]
-    );
+    const sales = await all(`
+      SELECT s.id, s.amount, s.description, s.created_at
+      FROM sales s
+      WHERE datetime(s.created_at) >= datetime(?)
+      ORDER BY datetime(s.created_at) DESC
+    `, [from]);
+
+    const ids = sales.map(s => s.id);
+    let items = [];
+    if (ids.length) {
+      const placeholders = ids.map(() => "?").join(",");
+      items = await all(`
+        SELECT si.sale_id, si.qty_used, p.name AS product_name
+        FROM sale_items si
+        JOIN products p ON p.id = si.product_id
+        WHERE si.sale_id IN (${placeholders})
+      `, ids);
+    }
+
+    const itemsBySale = new Map();
+    for (const it of items) {
+      const arr = itemsBySale.get(it.sale_id) || [];
+      arr.push(`${it.product_name} x${Number(it.qty_used)}`);
+      itemsBySale.set(it.sale_id, arr);
+    }
+
     const expenses = await all(
       `SELECT amount, description, created_at FROM expenses WHERE datetime(created_at) >= datetime(?) ORDER BY datetime(created_at) DESC`,
       [from]
@@ -182,15 +332,17 @@ router.get("/export/finance.csv", async (req, res) => {
     csv += `${totalSales},${totalExpenses},${profit}\n\n`;
 
     csv += "DETAILED RECORDS\n";
-    csv += "Type,Amount (NGN),Description,Date\n";
+    csv += "Type,Amount (NGN),Description,Products Used,Date\n";
 
     sales.forEach(r => {
       const d = String(r.description || "").replaceAll('"', '""');
-      csv += `"Sale",${Number(r.amount) || 0},"${d}","${new Date(r.created_at).toLocaleString()}"\n`;
+      const used = (itemsBySale.get(r.id) || []).join("; ").replaceAll('"', '""');
+      csv += `"Sale",${Number(r.amount) || 0},"${d}","${used}","${new Date(r.created_at).toLocaleString()}"\n`;
     });
+
     expenses.forEach(r => {
       const d = String(r.description || "").replaceAll('"', '""');
-      csv += `"Expense",${Number(r.amount) || 0},"${d}","${new Date(r.created_at).toLocaleString()}"\n`;
+      csv += `"Expense",${Number(r.amount) || 0},"${d}","","${new Date(r.created_at).toLocaleString()}"\n`;
     });
 
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
@@ -208,12 +360,35 @@ router.post("/email/finance", async (req, res) => {
     const period = parsePeriod(req.body?.period);
     if (!to) return res.status(400).json({ error: "Recipient email is required" });
 
-    // reuse export logic (build csv)
+    // Build CSV using same logic as export
     const from = startISO(period);
-    const sales = await all(
-      `SELECT amount, description, created_at FROM sales WHERE datetime(created_at) >= datetime(?) ORDER BY datetime(created_at) DESC`,
-      [from]
-    );
+
+    const sales = await all(`
+      SELECT s.id, s.amount, s.description, s.created_at
+      FROM sales s
+      WHERE datetime(s.created_at) >= datetime(?)
+      ORDER BY datetime(s.created_at) DESC
+    `, [from]);
+
+    const ids = sales.map(s => s.id);
+    let items = [];
+    if (ids.length) {
+      const placeholders = ids.map(() => "?").join(",");
+      items = await all(`
+        SELECT si.sale_id, si.qty_used, p.name AS product_name
+        FROM sale_items si
+        JOIN products p ON p.id = si.product_id
+        WHERE si.sale_id IN (${placeholders})
+      `, ids);
+    }
+
+    const itemsBySale = new Map();
+    for (const it of items) {
+      const arr = itemsBySale.get(it.sale_id) || [];
+      arr.push(`${it.product_name} x${Number(it.qty_used)}`);
+      itemsBySale.set(it.sale_id, arr);
+    }
+
     const expenses = await all(
       `SELECT amount, description, created_at FROM expenses WHERE datetime(created_at) >= datetime(?) ORDER BY datetime(created_at) DESC`,
       [from]
@@ -231,14 +406,17 @@ router.post("/email/finance", async (req, res) => {
     csv += "Total Sales (NGN),Total Expenses (NGN),Profit (NGN)\n";
     csv += `${totalSales},${totalExpenses},${profit}\n\n`;
     csv += "DETAILED RECORDS\n";
-    csv += "Type,Amount (NGN),Description,Date\n";
+    csv += "Type,Amount (NGN),Description,Products Used,Date\n";
+
     sales.forEach(r => {
       const d = String(r.description || "").replaceAll('"', '""');
-      csv += `"Sale",${Number(r.amount) || 0},"${d}","${new Date(r.created_at).toLocaleString()}"\n`;
+      const used = (itemsBySale.get(r.id) || []).join("; ").replaceAll('"', '""');
+      csv += `"Sale",${Number(r.amount) || 0},"${d}","${used}","${new Date(r.created_at).toLocaleString()}"\n`;
     });
+
     expenses.forEach(r => {
       const d = String(r.description || "").replaceAll('"', '""');
-      csv += `"Expense",${Number(r.amount) || 0},"${d}","${new Date(r.created_at).toLocaleString()}"\n`;
+      csv += `"Expense",${Number(r.amount) || 0},"${d}","","${new Date(r.created_at).toLocaleString()}"\n`;
     });
 
     await sendMailWithAttachment({
@@ -250,8 +428,8 @@ router.post("/email/finance", async (req, res) => {
     });
 
     res.json({ ok: true });
-  } catch {
-    res.status(500).json({ error: "Failed to send finance email" });
+  } catch (e) {
+    res.status(500).json({ error: e.message || "Failed to send finance email" });
   }
 });
 
