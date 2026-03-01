@@ -14,9 +14,15 @@
   --border: #e5e7eb;
   --shadow: 0 0 10px rgba(0,0,0,0.08);
   --radius: 12px;
+
+  /* ✅ extras for better polish */
+  --shadow2: 0 10px 25px rgba(0,0,0,0.10);
+  --focusRing: 0 0 0 3px rgba(0, 123, 255, 0.25);
 }
 
 * { box-sizing: border-box; }
+
+html, body { height: 100%; }
 
 body {
   font-family: Arial, sans-serif;
@@ -24,14 +30,18 @@ body {
   background: var(--bg);
   color: var(--text);
   margin: 0;
+  line-height: 1.4;
 }
 
 h1 {
   text-align: center;
   margin: 10px 0 18px;
+  letter-spacing: 0.2px;
 }
 
 h2 { margin: 18px 0 10px; }
+
+h3 { margin: 0; }
 
 .muted { color: var(--muted); margin: 0; }
 
@@ -41,10 +51,12 @@ h2 { margin: 18px 0 10px; }
   margin: 10px 0 0;
 }
 
+/* Top controls */
 .topbar {
   display: flex;
   gap: 10px;
   justify-content: center;
+  align-items: center;
   flex-wrap: wrap;
   margin-bottom: 10px;
 }
@@ -59,6 +71,7 @@ h2 { margin: 18px 0 10px; }
   color: var(--muted);
 }
 
+/* Layout grid */
 .grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -72,21 +85,26 @@ h2 { margin: 18px 0 10px; }
   margin: 0;
   border-radius: var(--radius);
   box-shadow: var(--shadow);
+  border: 1px solid rgba(0,0,0,0.02);
 }
 
+/* Inputs */
 input {
   width: 100%;
-  padding: 10px;
+  padding: 10px 12px;
   margin: 6px 0;
   border-radius: 10px;
   border: 1px solid var(--border);
   outline: none;
+  transition: box-shadow .15s ease, border-color .15s ease;
 }
 
 input:focus {
   border-color: var(--primary);
+  box-shadow: var(--focusRing);
 }
 
+/* Buttons */
 button {
   padding: 10px 14px;
   margin: 6px 0;
@@ -95,10 +113,18 @@ button {
   background: var(--primary);
   color: white;
   border-radius: 10px;
-  font-weight: 600;
+  font-weight: 700;
+  transition: transform .05s ease, background .15s ease, box-shadow .15s ease;
+  box-shadow: 0 1px 0 rgba(0,0,0,0.08);
 }
 
 button:hover { background: var(--primaryHover); }
+button:active { transform: translateY(1px); }
+
+button:focus-visible {
+  outline: none;
+  box-shadow: var(--focusRing);
+}
 
 .secondary-btn {
   background: #111827;
@@ -107,17 +133,21 @@ button:hover { background: var(--primaryHover); }
   background: #0b1220;
 }
 
+/* Report action row */
 .report-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
+  align-items: center;
 }
 
+/* Email row (legacy support) */
 .email-row {
   margin-top: 10px;
   display: flex;
   gap: 10px;
   flex-wrap: wrap;
+  align-items: center;
 }
 
 .email-row input {
@@ -125,10 +155,7 @@ button:hover { background: var(--primaryHover); }
   min-width: 220px;
   margin: 0;
 }
-
-.email-row button {
-  margin: 0;
-}
+.email-row button { margin: 0; }
 
 /* status box json view */
 .status-box {
@@ -137,6 +164,7 @@ button:hover { background: var(--primaryHover); }
   border-radius: 12px;
   border: 1px solid var(--border);
   background: #f9fafb;
+  box-shadow: var(--shadow);
 }
 .status-box pre {
   margin: 10px 0 0;
@@ -151,14 +179,15 @@ button:hover { background: var(--primaryHover); }
 .status-box.success { border-color: #34d399; }
 .status-box.error { border-color: #f87171; }
 
-/* Records table wrap */
+/* Tables */
 .table-wrap {
   width: 100%;
   overflow-x: auto;
   border-radius: var(--radius);
-  box-shadow: var(--shadow);
+  box-shadow: var(--shadow2);
   background: var(--card);
   margin-top: 10px;
+  border: 1px solid rgba(0,0,0,0.04);
 }
 
 .records-table {
@@ -173,6 +202,8 @@ button:hover { background: var(--primaryHover); }
   border-bottom: 1px solid var(--border);
   text-align: left;
   vertical-align: top;
+  white-space: normal;
+  word-break: break-word;
 }
 
 .records-table thead th {
@@ -183,9 +214,15 @@ button:hover { background: var(--primaryHover); }
   z-index: 1;
 }
 
+.records-table tbody tr:hover td {
+  background: rgba(0, 123, 255, 0.04);
+}
+
 .action-col { text-align: center; }
 
-.action-buttons {
+/* ✅ Ensures action buttons never overflow columns */
+.action-buttons,
+.inv-actions {
   display: flex;
   gap: 8px;
   justify-content: center;
@@ -193,6 +230,15 @@ button:hover { background: var(--primaryHover); }
   width: 100%;
 }
 
+.action-buttons button,
+.inv-actions button {
+  margin: 0;
+  white-space: nowrap;
+  flex: 0 0 auto;
+  min-width: 92px;
+}
+
+/* Button variants */
 .edit-btn { background: var(--warning); }
 .edit-btn:hover { background: var(--warningHover); }
 
@@ -208,18 +254,15 @@ button:hover { background: var(--primaryHover); }
 .warn-btn { background: var(--purple); }
 .warn-btn:hover { background: var(--purpleHover); }
 
-.inv-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  justify-content: center;
-}
-
 /* Usage summary */
 .usage-summary {
   font-size: 0.92rem;
   color: var(--muted);
   margin: 10px 0 0;
+  padding: 10px 12px;
+  border: 1px dashed var(--border);
+  border-radius: 12px;
+  background: #fafafa;
 }
 
 /* Section title */
@@ -262,7 +305,7 @@ button:hover { background: var(--primaryHover); }
   align-items: center;
 }
 
-.mini-bar-label { color: #111827; font-weight: 600; }
+.mini-bar-label { color: #111827; font-weight: 700; }
 
 .mini-bar-track {
   height: 12px;
@@ -275,12 +318,13 @@ button:hover { background: var(--primaryHover); }
   height: 100%;
   width: 0%;
   border-radius: 999px;
+  transition: width .25s ease;
 }
 
 .mini-bar-fill.sales { background: #16a34a; }
 .mini-bar-fill.expenses { background: #dc2626; }
 
-.mini-bar-value { text-align: right; color: #111827; }
+.mini-bar-value { text-align: right; color: #111827; font-weight: 700; }
 
 /* Modal */
 .modal {
@@ -301,6 +345,7 @@ button:hover { background: var(--primaryHover); }
   border-radius: 16px;
   box-shadow: 0 30px 60px rgba(0,0,0,0.25);
   overflow: hidden;
+  border: 1px solid rgba(0,0,0,0.05);
 }
 
 .modal-header {
@@ -318,6 +363,12 @@ button:hover { background: var(--primaryHover); }
   font-size: 18px;
   padding: 6px 10px;
   cursor: pointer;
+  color: #fff;
+  box-shadow: none;
+}
+
+.modal-close:hover {
+  background: rgba(255,255,255,0.10);
 }
 
 .modal-hint {
@@ -336,15 +387,16 @@ button:hover { background: var(--primaryHover); }
 
 .usage-row {
   display: grid;
-  grid-template-columns: 1fr 120px;
+  grid-template-columns: 1fr 140px;
   gap: 10px;
   align-items: center;
   padding: 10px;
   border: 1px solid var(--border);
   border-radius: 12px;
+  background: #fff;
 }
 
-.u-name { font-weight: 700; }
+.u-name { font-weight: 800; }
 .u-meta { color: var(--muted); font-size: 0.9rem; }
 
 .usage-row input { margin: 0; }
@@ -355,6 +407,7 @@ button:hover { background: var(--primaryHover); }
   gap: 10px;
   padding: 14px 16px;
   border-top: 1px solid var(--border);
+  background: #fafafa;
 }
 
 /* Inventory status */
@@ -362,6 +415,16 @@ button:hover { background: var(--primaryHover); }
   margin-top: 10px;
   color: var(--muted);
   word-break: break-word;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: #f9fafb;
+  border: 1px solid var(--border);
+}
+
+/* ✅ Better touch targets on mobile */
+@media (pointer: coarse) {
+  button { padding: 12px 14px; }
+  input { padding: 12px; }
 }
 
 /* MOBILE */
@@ -378,7 +441,23 @@ button:hover { background: var(--primaryHover); }
 
 @media (max-width: 520px) {
   .records-table { min-width: 650px; }
-  button { width: 100%; }
-  .email-row button { width: auto; }
-  .report-actions button { width: auto; }
+
+  /* Full-width buttons inside forms for easy tapping */
+  .form-section button {
+    width: 100%;
+  }
+
+  /* Keep report buttons compact */
+  .report-actions button {
+    width: auto;
+  }
+
+  .action-buttons button,
+  .inv-actions button {
+    min-width: 120px;
+  }
+
+  .usage-row {
+    grid-template-columns: 1fr;
+  }
 }
