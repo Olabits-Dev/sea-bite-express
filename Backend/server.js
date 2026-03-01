@@ -23,7 +23,7 @@ const allowedOrigins = new Set([
   "http://127.0.0.1:5500",
   "http://localhost:3000",
   "http://127.0.0.1:3000",
-  "https://sea-bite-express.netlify.app"
+  "https://sea-bite-express-1.onrender.com"
 ]);
 
 app.use(
@@ -137,6 +137,17 @@ async function runMigrations() {
     process.exit(1);
   }
 }
+const cors = require("cors");
+
+app.use(cors({
+  origin: [
+    "https://sea-bite-express-1.onrender.com",  // your frontend render url
+    "https://sea-bite-express.onrender.com"     // (optional if same)
+  ],
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"],
+}));
+app.options("*", cors());
 
 const PORT = process.env.PORT || 5000;
 
