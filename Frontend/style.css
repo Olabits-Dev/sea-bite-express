@@ -3,15 +3,21 @@
   --card: #fff;
   --text: #111;
   --muted: #6b7280;
+
   --primary: #007bff;
   --primaryHover: #0056b3;
+
   --danger: #dc2626;
   --dangerHover: #b91c1c;
+
   --warning: #f59e0b;
   --warningHover: #d97706;
+
   --purple: #7c3aed;
   --purpleHover: #6d28d9;
+
   --border: #e5e7eb;
+  --border2: #d1d5db; /* stronger border for column lines */
   --shadow: 0 0 10px rgba(0,0,0,0.08);
   --radius: 12px;
 }
@@ -39,8 +45,10 @@ h2 { margin: 18px 0 10px; }
   color: var(--muted);
   font-size: 0.9rem;
   margin: 10px 0 0;
+  line-height: 1.35;
 }
 
+/* Top buttons */
 .topbar {
   display: flex;
   gap: 10px;
@@ -59,6 +67,7 @@ h2 { margin: 18px 0 10px; }
   color: var(--muted);
 }
 
+/* Layout grid */
 .grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -113,24 +122,7 @@ button:hover { background: var(--primaryHover); }
   gap: 10px;
 }
 
-.email-row {
-  margin-top: 10px;
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
-.email-row input {
-  flex: 1;
-  min-width: 220px;
-  margin: 0;
-}
-
-.email-row button {
-  margin: 0;
-}
-
-/* status box json view */
+/* Status box JSON view (if used anywhere) */
 .status-box {
   margin-top: 10px;
   padding: 12px;
@@ -154,37 +146,76 @@ button:hover { background: var(--primaryHover); }
 /* Records table wrap */
 .table-wrap {
   width: 100%;
-  overflow-x: auto;
+  overflow-x: auto; /* horizontal scroll on mobile */
   border-radius: var(--radius);
   box-shadow: var(--shadow);
   background: var(--card);
   margin-top: 10px;
+  border: 1px solid var(--border);
 }
 
+/* ✅ Professional table look: row + column lines */
 .records-table {
   width: 100%;
-  border-collapse: collapse;
+  border-collapse: separate; /* allow clean borders without overlap */
+  border-spacing: 0;
   min-width: 900px;
 }
 
-.records-table th,
-.records-table td {
-  padding: 10px;
-  border-bottom: 1px solid var(--border);
-  text-align: left;
-  vertical-align: top;
-}
-
+/* Header */
 .records-table thead th {
   background: var(--primary);
   color: #fff;
   position: sticky;
   top: 0;
   z-index: 1;
+
+  padding: 12px 12px;
+  text-align: left;
+  vertical-align: middle;
+  font-weight: 700;
+
+  /* ✅ vertical lines in header */
+  border-right: 1px solid rgba(255,255,255,0.35);
 }
 
+.records-table thead th:last-child {
+  border-right: none;
+}
+
+/* Body cells */
+.records-table td {
+  padding: 12px 12px;
+  text-align: left;
+  vertical-align: top;
+  background: #fff;
+
+  /* ✅ row line */
+  border-top: 1px solid var(--border);
+
+  /* ✅ column line */
+  border-right: 1px solid var(--border2);
+}
+
+/* Remove last column line */
+.records-table td:last-child {
+  border-right: none;
+}
+
+/* First row should not have double thickness under header */
+.records-table tbody tr:first-child td {
+  border-top: 1px solid var(--border);
+}
+
+/* Hover highlight */
+.records-table tbody tr:hover td {
+  background: #f9fafb;
+}
+
+/* Make action column centered */
 .action-col { text-align: center; }
 
+/* Buttons in action columns */
 .action-buttons {
   display: flex;
   gap: 8px;
@@ -193,6 +224,7 @@ button:hover { background: var(--primaryHover); }
   width: 100%;
 }
 
+/* Button variants */
 .edit-btn { background: var(--warning); }
 .edit-btn:hover { background: var(--warningHover); }
 
@@ -318,6 +350,7 @@ button:hover { background: var(--primaryHover); }
   font-size: 18px;
   padding: 6px 10px;
   cursor: pointer;
+  color: #fff;
 }
 
 .modal-hint {
@@ -378,7 +411,9 @@ button:hover { background: var(--primaryHover); }
 
 @media (max-width: 520px) {
   .records-table { min-width: 650px; }
+
   button { width: 100%; }
-  .email-row button { width: auto; }
+
+  /* Keep some button rows flexible */
   .report-actions button { width: auto; }
 }
