@@ -15,32 +15,45 @@ const inventoryRoutes = require("./routes/inventory");
 const financeRoutes = require("./routes/finance");
 
 const app = express();
+
+// ---------- Middleware ----------
 app.use(express.json({ limit: "2mb" }));
 
-// --- CORS (Netlify + local) ---
+// ---------- CORS (Render + local) ----------
 const allowedOrigins = new Set([
   "http://localhost:5500",
   "http://127.0.0.1:5500",
   "http://localhost:3000",
   "http://127.0.0.1:3000",
+
+  // ✅ Your Render frontend domain (from screenshot)
   "https://sea-bite-express-1.onrender.com"
 ]);
 
-app.use(
-  cors({
-    origin: (origin, cb) => {
-      if (!origin) return cb(null, true);
-      if (allowedOrigins.has(origin)) return cb(null, true);
-      if (/^https:\/\/.*\.netlify\.app$/.test(origin)) return cb(null, true);
-      return cb(null, false);
-    },
-    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"]
-  })
-);
-app.options("*", cors());
+const corsOptions = {
+  origin: (origin, cb) => {
+    // Allow server-to-server calls / Postman / curl
+    if (!origin) return cb(null, true);
 
-// --- Root + Health ---
+    // Allow explicit known origins
+    if (allowedOrigins.has(origin)) return cb(null, true);
+
+    // Allow any onrender subdomain (useful if you create another static site)
+    if (/^https:\/\/.*\.onrender\.com$/.test(origin)) return cb(null, true);
+
+    // Block everything else (and return an error)
+    return cb(new Error(`CORS blocked for origin: ${origin}`));
+  },
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"],
+  credentials: false
+};
+
+// ✅ Apply CORS + handle preflight
+app.use(cors(corsOptions));
+app.options("*", cors(corsOptions));
+
+// ---------- Root + Health ----------
 app.get("/", (req, res) => {
   res.json({
     ok: true,
@@ -51,21 +64,32 @@ app.get("/", (req, res) => {
   });
 });
 
-app.get("/health", (req, res) => {
-  res.json({ ok: true, time: new Date().toISOString() });
+app.get("/health", async (req, res) => {
+  try {
+    // DB ping
+    await pool.query("SELECT 1 as ok");
+    res.json({ ok: true, db: true, time: new Date().toISOString() });
+  } catch (e) {
+    res.status(500).json({
+      ok: false,
+      db: false,
+      time: new Date().toISOString(),
+      error: e.message
+    });
+  }
 });
 
-// --- Routes ---
+// ---------- Routes ----------
 app.use("/api/inventory", inventoryRoutes);
 app.use("/api/finance", financeRoutes);
 
-// --- Error handler ---
+// ---------- Error handler ----------
 app.use((err, req, res, next) => {
   console.error("SERVER ERROR:", err);
   res.status(500).json({ error: err.message || "Internal server error" });
 });
 
-// --- Auto Migration ---
+// ---------- Auto Migration ----------
 async function runMigrations() {
   try {
     await pool.query(`
@@ -92,6 +116,7 @@ async function runMigrations() {
       );
     `);
 
+    // Ensure reason column exists (safe migration)
     await pool.query(`
       DO $$
       BEGIN
@@ -137,18 +162,8 @@ async function runMigrations() {
     process.exit(1);
   }
 }
-const cors = require("cors");
 
-app.use(cors({
-  origin: [
-    "https://sea-bite-express-1.onrender.com",  // your frontend render url
-    "https://sea-bite-express.onrender.com"     // (optional if same)
-  ],
-  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization"],
-}));
-app.options("*", cors());
-
+// ---------- Start server ----------
 const PORT = process.env.PORT || 5000;
 
 runMigrations().then(() => {
