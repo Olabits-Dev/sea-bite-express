@@ -65,6 +65,11 @@ h2 { margin: 18px 0 10px; }
   gap: 16px;
 }
 
+.admin-grid {
+  grid-template-columns: 1fr;
+  margin-bottom: 14px;
+}
+
 .form-section,
 .report-section {
   background: var(--card);
@@ -83,9 +88,7 @@ input {
   outline: none;
 }
 
-input:focus {
-  border-color: var(--primary);
-}
+input:focus { border-color: var(--primary); }
 
 button {
   padding: 10px 14px;
@@ -100,6 +103,14 @@ button {
 
 button:hover { background: var(--primaryHover); }
 
+/* ✅ Admin reset button */
+.danger-solid {
+  background: var(--danger);
+}
+.danger-solid:hover {
+  background: var(--dangerHover);
+}
+
 .secondary-btn { background: #111827; }
 .secondary-btn:hover { background: #0b1220; }
 
@@ -109,22 +120,6 @@ button:hover { background: var(--primaryHover); }
   gap: 10px;
 }
 
-.email-row {
-  margin-top: 10px;
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
-.email-row input {
-  flex: 1;
-  min-width: 220px;
-  margin: 0;
-}
-
-.email-row button { margin: 0; }
-
-/* Records table wrap */
 .table-wrap {
   width: 100%;
   overflow-x: auto;
@@ -148,7 +143,6 @@ button:hover { background: var(--primaryHover); }
   vertical-align: top;
 }
 
-/* ✅ vertical column lines */
 .records-table th + th,
 .records-table td + td {
   border-left: 1px solid var(--border);
@@ -187,7 +181,6 @@ button:hover { background: var(--primaryHover); }
 .warn-btn { background: var(--purple); }
 .warn-btn:hover { background: var(--purpleHover); }
 
-/* ✅ Inventory action buttons smaller + tighter */
 .inv-actions {
   display: flex;
   flex-wrap: wrap;
@@ -203,14 +196,12 @@ button:hover { background: var(--primaryHover); }
   line-height: 1.1;
 }
 
-/* Usage summary */
 .usage-summary {
   font-size: 0.92rem;
   color: var(--muted);
   margin: 10px 0 0;
 }
 
-/* Section title */
 .section-title {
   display: flex;
   align-items: baseline;
@@ -219,7 +210,6 @@ button:hover { background: var(--primaryHover); }
   margin-top: 18px;
 }
 
-/* Mini chart */
 .mini-chart {
   margin-top: 14px;
   padding: 14px;
@@ -267,7 +257,6 @@ button:hover { background: var(--primaryHover); }
 
 .mini-bar-value { text-align: right; color: #111827; }
 
-/* Modal */
 .modal {
   position: fixed;
   inset: 0;
@@ -342,24 +331,19 @@ button:hover { background: var(--primaryHover); }
   border-top: 1px solid var(--border);
 }
 
-/* Inventory status */
 .status {
   margin-top: 10px;
   color: var(--muted);
   word-break: break-word;
 }
 
-/* ✅ MOBILE: turn tables into cards (fix “header only” issue) */
 @media (max-width: 900px) {
   body { padding: 14px; }
   .grid { grid-template-columns: 1fr; }
-
   .records-table { min-width: 720px; }
-
   .mini-bar-row { grid-template-columns: 70px 1fr 120px; }
 }
 
-/* Mobile card mode: show rows as stacked blocks */
 @media (max-width: 620px) {
   .records-table.mobile-cards {
     min-width: 0;
@@ -367,9 +351,7 @@ button:hover { background: var(--primaryHover); }
     border-spacing: 0 10px;
   }
 
-  .records-table.mobile-cards thead {
-    display: none;
-  }
+  .records-table.mobile-cards thead { display: none; }
 
   .records-table.mobile-cards tbody,
   .records-table.mobile-cards tr,
@@ -397,8 +379,6 @@ button:hover { background: var(--primaryHover); }
   }
 
   .records-table.mobile-cards td:last-child { border-bottom: none; }
-
-  /* remove vertical separators in card mode */
   .records-table.mobile-cards td + td { border-left: none; }
 
   .records-table.mobile-cards td::before {
@@ -408,10 +388,7 @@ button:hover { background: var(--primaryHover); }
     max-width: 45%;
   }
 
-  .action-buttons, .inv-actions {
-    justify-content: flex-start;
-  }
-
+  .action-buttons, .inv-actions { justify-content: flex-start; }
   button { width: 100%; }
   .report-actions button { width: auto; }
 }

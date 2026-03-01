@@ -1087,6 +1087,38 @@ $("syncBtn")?.addEventListener("click", async () => {
 window.addEventListener("online", async () => { setNetUI(); await flushQueue(); });
 window.addEventListener("offline", () => setNetUI());
 
+async function adminResetDatabase() {
+  const status = document.getElementById("adminResetStatus");
+  const token = (document.getElementById("adminToken")?.value || "").trim();
+
+  if (!token) {
+    alert("Enter admin reset token");
+    return;
+  }
+
+  if (!confirm("Reset database? This will clear test data. Continue?")) return;
+
+  if (status) status.textContent = "Resetting...";
+
+  try {
+    // ✅ your backend reset endpoint (must exist on server.js)
+    const resp = await api("/api/admin/reset", {
+      method: "POST",
+      headers: { "x-admin-token": token },
+      body: JSON.stringify({ confirm: true })
+    });
+
+    if (status) status.textContent = `✅ Reset done: ${resp?.message || "OK"}`;
+
+    // refresh cached data
+    await loadAll();
+  } catch (e) {
+    const msg = e?.data?.error || e.message || "Reset failed";
+    if (status) status.textContent = `❌ Reset failed: ${msg}`;
+    alert(msg);
+  }
+}
+
 /***********************
  * PWA INSTALL
  ***********************/

@@ -23,6 +23,23 @@
     <span id="queueStatus">Pending: 0</span>
   </div>
 
+  <!-- ✅ ADMIN TOOLS (RESET) -->
+  <div class="grid admin-grid">
+    <div class="form-section">
+      <h2>Admin Tools</h2>
+      <p class="hint">
+        Reset clears test data (sales, expenses, movements) safely. Inventory products may also be cleared depending on backend rule.
+      </p>
+
+      <input type="password" id="adminToken" placeholder="Admin reset token" autocomplete="off" />
+      <button type="button" class="danger-solid" onclick="adminResetDatabase()">
+        Reset Database
+      </button>
+
+      <div id="adminResetStatus" class="status"></div>
+    </div>
+  </div>
+
   <div class="grid">
     <div class="form-section">
       <h2>Add Sale</h2>
@@ -159,7 +176,7 @@
     </table>
   </div>
 
-  <!-- ✅ NEW: Loss History -->
+  <!-- Loss History -->
   <div class="section-title">
     <h2>Loss History</h2>
     <p class="muted">Spoilage & Mishandling records</p>
