@@ -16,11 +16,6 @@
   <div class="topbar">
     <button id="installBtn" style="display:none;">Install App</button>
     <button id="syncBtn" type="button">Sync Now</button>
-
-    <!-- ✅ Admin reset -->
-    <button id="resetBtn" type="button" onclick="resetDatabase()" class="danger-btn">
-      Reset Database (Admin)
-    </button>
   </div>
 
   <div class="statusbar">
@@ -86,7 +81,7 @@
 
   <h2>All Records</h2>
   <div class="table-wrap">
-    <table class="records-table finance-table">
+    <table class="records-table finance-table mobile-cards">
       <colgroup>
         <col style="width: 90px" />
         <col style="width: 140px" />
@@ -141,7 +136,7 @@
   </div>
 
   <div class="table-wrap">
-    <table class="records-table inventory-table">
+    <table class="records-table inventory-table mobile-cards">
       <colgroup>
         <col />
         <col style="width: 140px" />
@@ -161,6 +156,38 @@
         </tr>
       </thead>
       <tbody id="productsTable"></tbody>
+    </table>
+  </div>
+
+  <!-- ✅ NEW: Loss History -->
+  <div class="section-title">
+    <h2>Loss History</h2>
+    <p class="muted">Spoilage & Mishandling records</p>
+  </div>
+
+  <div class="report-actions" style="margin-top: 6px;">
+    <button type="button" onclick="exportLossCSV()">Export Loss CSV</button>
+  </div>
+
+  <div class="table-wrap">
+    <table class="records-table loss-table mobile-cards">
+      <colgroup>
+        <col />
+        <col style="width: 120px" />
+        <col style="width: 140px" />
+        <col style="width: 220px" />
+        <col style="width: 220px" />
+      </colgroup>
+      <thead>
+        <tr>
+          <th>Product</th>
+          <th>Qty</th>
+          <th>Reason</th>
+          <th>Date</th>
+          <th class="action-col">Action</th>
+        </tr>
+      </thead>
+      <tbody id="lossTable"></tbody>
     </table>
   </div>
 

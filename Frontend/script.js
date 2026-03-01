@@ -1,7 +1,7 @@
 /***********************
  * CONFIG
  ***********************/
-const PROD_API_BASE = "https://sea-bite-express.onrender.com"; // ✅ backend
+const PROD_API_BASE = "https://sea-bite-express.onrender.com"; // ✅
 
 const API_BASE = (() => {
   const host = window.location.hostname;
@@ -20,8 +20,11 @@ function setVal(id, v) { const el = $(id); if (el) el.value = v; }
 
 function escapeHtml(str) {
   return String(str)
-    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;").replace(/'/g, "&#039;");
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
 }
 
 function formatCurrency(amount) {
@@ -80,7 +83,7 @@ async function setQueueUI() {
  * IndexedDB (offline queue + cached data)
  ***********************/
 const DB_NAME = "seabite_offline_db";
-const DB_VERSION = 2;
+const DB_VERSION = 3; // ✅ bumped because we added "losses" store
 
 function openDB() {
   return new Promise((resolve, reject) => {
@@ -92,6 +95,7 @@ function openDB() {
       if (!db.objectStoreNames.contains("sales")) db.createObjectStore("sales", { keyPath: "id" });
       if (!db.objectStoreNames.contains("expenses")) db.createObjectStore("expenses", { keyPath: "id" });
       if (!db.objectStoreNames.contains("products")) db.createObjectStore("products", { keyPath: "id" });
+      if (!db.objectStoreNames.contains("losses")) db.createObjectStore("losses", { keyPath: "id" }); // ✅ new
     };
 
     req.onsuccess = () => resolve(req.result);
@@ -180,24 +184,8 @@ async function api(path, options = {}) {
     err.status = res.status;
     throw err;
   }
+
   return data;
-}
-
-async function apiWithRetry(path, options = {}, retries = 4) {
-  let lastErr;
-  for (let i = 0; i < retries; i++) {
-    try {
-      return await api(path, options);
-    } catch (e) {
-      lastErr = e;
-      await new Promise(r => setTimeout(r, 1000 * (i + 1)));
-    }
-  }
-  throw lastErr;
-}
-
-async function wakeBackend() {
-  try { await api("/health"); } catch {}
 }
 
 async function apiOrQueue(action) {
@@ -213,35 +201,6 @@ async function apiOrQueue(action) {
 }
 
 /***********************
- * ✅ ADMIN RESET
- ***********************/
-async function resetDatabase() {
-  if (!navigator.onLine) return alert("You must be online to reset database.");
-
-  const ok = confirm("⚠️ This will DELETE ALL DATA on the server database. Continue?");
-  if (!ok) return;
-
-  const token = prompt("Enter Admin Reset Token:");
-  if (!token) return alert("Reset cancelled.");
-
-  try {
-    // helps free Render wake up
-    await wakeBackend();
-
-    const resp = await apiWithRetry("/api/admin/reset", {
-      method: "POST",
-      headers: { "X-Admin-Token": token }
-    });
-
-    alert(`✅ ${resp.message || "Reset completed"}`);
-    await loadAll();
-  } catch (e) {
-    alert(`❌ Reset failed: ${e.message}`);
-    console.error(e);
-  }
-}
-
-/***********************
  * STATE
  ***********************/
 let deferredPrompt;
@@ -250,6 +209,7 @@ let lastReportType = null;
 let sales = [];
 let expenses = [];
 let products = [];
+let losses = []; // ✅ NEW
 let pendingUsage = [];
 
 /***********************
@@ -288,23 +248,28 @@ async function loadAll() {
       sales = await api("/api/finance/sales");
       expenses = await api("/api/finance/expenses");
       products = await api("/api/inventory/products");
+      losses = await api("/api/inventory/losses"); // ✅ NEW
 
       await idbPutMany("sales", sales);
       await idbPutMany("expenses", expenses);
       await idbPutMany("products", products);
+      await idbPutMany("losses", losses); // ✅ NEW
     } catch {
       sales = await idbGetAll("sales");
       expenses = await idbGetAll("expenses");
       products = await idbGetAll("products");
+      losses = await idbGetAll("losses");
     }
   } else {
     sales = await idbGetAll("sales");
     expenses = await idbGetAll("expenses");
     products = await idbGetAll("products");
+    losses = await idbGetAll("losses");
   }
 
   renderFinanceTable();
   renderProductsTable();
+  renderLossTable(); // ✅ NEW
   renderUsageSummary();
 }
 
@@ -448,12 +413,12 @@ function renderFinanceTable() {
   allRecords.forEach(item => {
     table.innerHTML += `
       <tr>
-        <td>${escapeHtml(item.type)}</td>
-        <td>${formatCurrency(item.amount)}</td>
-        <td>${escapeHtml(item.desc)}</td>
-        <td>${escapeHtml(item.used)}</td>
-        <td>${formatDateTime(item.date)}</td>
-        <td>
+        <td data-label="Type">${escapeHtml(item.type)}</td>
+        <td data-label="Amount">${escapeHtml(formatCurrency(item.amount))}</td>
+        <td data-label="Description">${escapeHtml(item.desc)}</td>
+        <td data-label="Products Used">${escapeHtml(item.used)}</td>
+        <td data-label="Date & Time">${escapeHtml(formatDateTime(item.date))}</td>
+        <td data-label="Action">
           <div class="action-buttons">
             <button class="edit-btn" type="button" onclick="editRecord('${item.id}','${item.type}')">Edit</button>
             <button class="delete-btn" type="button" onclick="deleteRecord('${item.id}','${item.type}')">Delete</button>
@@ -796,9 +761,9 @@ async function editProduct(id) {
 async function deleteProduct(id) {
   if (!confirm("Delete this product?")) return;
 
-  // optimistic UI remove
   products = products.filter(x => String(x.id) !== String(id));
   await idbDelete("products", id);
+
   pendingUsage = pendingUsage.filter(x => String(x.product_id) !== String(id));
 
   renderProductsTable();
@@ -810,7 +775,6 @@ async function deleteProduct(id) {
     options: { method: "DELETE" }
   });
 
-  // if server blocks delete (409), reload to restore
   if (navigator.onLine && !result.ok) {
     alert(`Product delete failed: ${result.error}`);
     await loadAll();
@@ -878,6 +842,16 @@ async function recordLoss(productId, reason) {
   if (navigator.onLine && !result.ok) {
     alert(`Loss record failed: ${result.error}`);
     await loadAll();
+    return;
+  }
+
+  // refresh loss table quickly when online
+  if (navigator.onLine) {
+    try {
+      losses = await api("/api/inventory/losses");
+      await idbPutMany("losses", losses);
+      renderLossTable();
+    } catch {}
   }
 }
 
@@ -896,12 +870,12 @@ function renderProductsTable() {
   products.forEach(p => {
     tbody.innerHTML += `
       <tr>
-        <td>${escapeHtml(p.name)}</td>
-        <td>${escapeHtml(p.sku || "")}</td>
-        <td>${escapeHtml(p.unit || "pcs")}</td>
-        <td>${p.qty}</td>
-        <td>${p.reorder_level || 0}</td>
-        <td>
+        <td data-label="Name">${escapeHtml(p.name)}</td>
+        <td data-label="SKU">${escapeHtml(p.sku || "")}</td>
+        <td data-label="Unit">${escapeHtml(p.unit || "pcs")}</td>
+        <td data-label="Qty">${escapeHtml(p.qty)}</td>
+        <td data-label="Reorder">${escapeHtml(p.reorder_level || 0)}</td>
+        <td data-label="Action">
           <div class="inv-actions">
             <button class="in-btn" type="button" onclick="stockMove('${p.id}', 'IN')">Stock IN</button>
             <button class="out-btn" type="button" onclick="stockMove('${p.id}', 'OUT')">Stock OUT</button>
@@ -940,13 +914,15 @@ async function emailInventoryCSV() {
     setVal("invEmail", "");
   } catch (e) {
     const payload = e.data || { error: e.message };
-    if (status) status.textContent = `❌ Failed: ${payload?.error || e.message}`;
+    if (status) status.textContent = `❌ Failed: ${JSON.stringify(payload)}`;
 
     const msg = payload?.error || e.message || "";
+
     if (isMailNotConfigured(payload) || isNetworkMailError(msg)) {
       const ok = confirm("SMTP email is not available right now. Use Email (Easy) instead?");
       if (ok) return emailInventoryEasy();
     }
+
     alert(`❌ Inventory email failed: ${msg}`);
   }
 }
@@ -975,6 +951,110 @@ Regards.`;
 
   openMailto(to, "Inventory Report - SeaBite Tracker", body);
   if (status) status.textContent = "✅ Email app opened (attach the downloaded CSV).";
+}
+
+/***********************
+ * ✅ LOSS HISTORY UI (NEW)
+ ***********************/
+function renderLossTable() {
+  const tbody = $("lossTable");
+  if (!tbody) return;
+
+  tbody.innerHTML = "";
+  if (!losses || !losses.length) {
+    tbody.innerHTML = `<tr><td colspan="5">No loss records yet.</td></tr>`;
+    return;
+  }
+
+  const sorted = [...losses].sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
+
+  sorted.forEach(r => {
+    const product = r.product_name || `Product#${r.product_id}`;
+    const unit = r.product_unit ? ` ${r.product_unit}` : "";
+    tbody.innerHTML += `
+      <tr>
+        <td data-label="Product">${escapeHtml(product)}</td>
+        <td data-label="Qty">${escapeHtml(`${r.qty}${unit}`)}</td>
+        <td data-label="Reason">${escapeHtml(r.reason)}</td>
+        <td data-label="Date">${escapeHtml(formatDateTime(r.created_at))}</td>
+        <td data-label="Action">
+          <div class="action-buttons">
+            <button class="edit-btn" type="button" onclick="editLoss('${r.id}')">Edit</button>
+            <button class="delete-btn" type="button" onclick="deleteLoss('${r.id}')">Delete</button>
+          </div>
+        </td>
+      </tr>
+    `;
+  });
+}
+
+async function editLoss(lossId) {
+  const rec = losses.find(x => String(x.id) === String(lossId));
+  if (!rec) return alert("Loss record not found.");
+
+  const qtyRaw = prompt("Edit qty lost:", rec.qty);
+  if (qtyRaw === null) return;
+  const qty = Number(qtyRaw);
+  if (!isValidQty(qty)) return alert("Qty must be > 0");
+
+  const reasonRaw = prompt("Reason (SPOILAGE or MISHANDLING):", rec.reason);
+  if (reasonRaw === null) return;
+  const reason = String(reasonRaw).trim().toUpperCase();
+  if (!["SPOILAGE", "MISHANDLING"].includes(reason)) {
+    return alert("Reason must be SPOILAGE or MISHANDLING");
+  }
+
+  const note = prompt("Note (optional):", rec.note || "") ?? "";
+
+  // optimistic update (UI)
+  rec.qty = qty;
+  rec.reason = reason;
+  rec.note = note;
+  await idbPut("losses", rec);
+  renderLossTable();
+
+  const result = await apiOrQueue({
+    kind: "loss_update",
+    path: `/api/inventory/losses/${lossId}`,
+    options: { method: "PUT", body: JSON.stringify({ qty, reason, note }) }
+  });
+
+  if (navigator.onLine && !result.ok) {
+    alert(`Loss update failed: ${result.error}`);
+    await loadAll();
+    return;
+  }
+
+  // refresh products too (because edit adjusts stock)
+  if (navigator.onLine) await loadAll();
+}
+
+async function deleteLoss(lossId) {
+  if (!confirm("Delete this loss record? (Stock will be restored)")) return;
+
+  losses = losses.filter(x => String(x.id) !== String(lossId));
+  await idbDelete("losses", lossId);
+  renderLossTable();
+
+  const result = await apiOrQueue({
+    kind: "loss_delete",
+    path: `/api/inventory/losses/${lossId}`,
+    options: { method: "DELETE" }
+  });
+
+  if (navigator.onLine && !result.ok) {
+    alert(`Loss delete failed: ${result.error}`);
+    await loadAll();
+    return;
+  }
+
+  // refresh products too (because delete restores stock)
+  if (navigator.onLine) await loadAll();
+}
+
+function exportLossCSV() {
+  if (!navigator.onLine) return alert("You must be online to export server CSV.");
+  window.open(`${API_BASE}/api/inventory/export/losses.csv`, "_blank");
 }
 
 /***********************
