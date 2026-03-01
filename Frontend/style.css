@@ -3,21 +3,15 @@
   --card: #fff;
   --text: #111;
   --muted: #6b7280;
-
   --primary: #007bff;
   --primaryHover: #0056b3;
-
   --danger: #dc2626;
   --dangerHover: #b91c1c;
-
   --warning: #f59e0b;
   --warningHover: #d97706;
-
   --purple: #7c3aed;
   --purpleHover: #6d28d9;
-
   --border: #e5e7eb;
-  --border2: #d1d5db; /* stronger border for column lines */
   --shadow: 0 0 10px rgba(0,0,0,0.08);
   --radius: 12px;
 }
@@ -45,10 +39,8 @@ h2 { margin: 18px 0 10px; }
   color: var(--muted);
   font-size: 0.9rem;
   margin: 10px 0 0;
-  line-height: 1.35;
 }
 
-/* Top buttons */
 .topbar {
   display: flex;
   gap: 10px;
@@ -67,7 +59,6 @@ h2 { margin: 18px 0 10px; }
   color: var(--muted);
 }
 
-/* Layout grid */
 .grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -92,9 +83,7 @@ input {
   outline: none;
 }
 
-input:focus {
-  border-color: var(--primary);
-}
+input:focus { border-color: var(--primary); }
 
 button {
   padding: 10px 14px;
@@ -109,12 +98,11 @@ button {
 
 button:hover { background: var(--primaryHover); }
 
-.secondary-btn {
-  background: #111827;
-}
-.secondary-btn:hover {
-  background: #0b1220;
-}
+.secondary-btn { background: #111827; }
+.secondary-btn:hover { background: #0b1220; }
+
+.danger-btn { background: var(--danger); }
+.danger-btn:hover { background: var(--dangerHover); }
 
 .report-actions {
   display: flex;
@@ -122,100 +110,52 @@ button:hover { background: var(--primaryHover); }
   gap: 10px;
 }
 
-/* Status box JSON view (if used anywhere) */
-.status-box {
-  margin-top: 10px;
-  padding: 12px;
-  border-radius: 12px;
-  border: 1px solid var(--border);
-  background: #f9fafb;
-}
-.status-box pre {
-  margin: 10px 0 0;
-  padding: 10px;
-  border-radius: 10px;
-  background: #0b1020;
-  color: #e5e7eb;
-  overflow: auto;
-  font-size: 0.85rem;
-}
-.status-box.sending { border-color: #60a5fa; }
-.status-box.success { border-color: #34d399; }
-.status-box.error { border-color: #f87171; }
-
 /* Records table wrap */
 .table-wrap {
   width: 100%;
-  overflow-x: auto; /* horizontal scroll on mobile */
+  overflow-x: auto;
   border-radius: var(--radius);
   box-shadow: var(--shadow);
   background: var(--card);
   margin-top: 10px;
-  border: 1px solid var(--border);
 }
 
-/* ✅ Professional table look: row + column lines */
 .records-table {
   width: 100%;
-  border-collapse: separate; /* allow clean borders without overlap */
+  border-collapse: separate;      /* ✅ needed for clean column borders */
   border-spacing: 0;
   min-width: 900px;
 }
 
-/* Header */
+.records-table th,
+.records-table td {
+  padding: 12px 12px;             /* ✅ better spacing */
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+  background: #fff;
+}
+
+/* ✅ column separators */
+.records-table th:not(:last-child),
+.records-table td:not(:last-child) {
+  border-right: 1px solid var(--border);
+}
+
+/* header */
 .records-table thead th {
   background: var(--primary);
   color: #fff;
   position: sticky;
   top: 0;
   z-index: 1;
-
-  padding: 12px 12px;
-  text-align: left;
-  vertical-align: middle;
-  font-weight: 700;
-
-  /* ✅ vertical lines in header */
-  border-right: 1px solid rgba(255,255,255,0.35);
 }
 
-.records-table thead th:last-child {
-  border-right: none;
-}
+/* prevent header cell background being overridden */
+.records-table thead th { background-clip: padding-box; }
 
-/* Body cells */
-.records-table td {
-  padding: 12px 12px;
-  text-align: left;
-  vertical-align: top;
-  background: #fff;
-
-  /* ✅ row line */
-  border-top: 1px solid var(--border);
-
-  /* ✅ column line */
-  border-right: 1px solid var(--border2);
-}
-
-/* Remove last column line */
-.records-table td:last-child {
-  border-right: none;
-}
-
-/* First row should not have double thickness under header */
-.records-table tbody tr:first-child td {
-  border-top: 1px solid var(--border);
-}
-
-/* Hover highlight */
-.records-table tbody tr:hover td {
-  background: #f9fafb;
-}
-
-/* Make action column centered */
 .action-col { text-align: center; }
 
-/* Buttons in action columns */
 .action-buttons {
   display: flex;
   gap: 8px;
@@ -224,7 +164,6 @@ button:hover { background: var(--primaryHover); }
   width: 100%;
 }
 
-/* Button variants */
 .edit-btn { background: var(--warning); }
 .edit-btn:hover { background: var(--warningHover); }
 
@@ -282,10 +221,7 @@ button:hover { background: var(--primaryHover); }
   font-weight: 700;
 }
 
-.mini-bars {
-  display: grid;
-  gap: 10px;
-}
+.mini-bars { display: grid; gap: 10px; }
 
 .mini-bar-row {
   display: grid;
@@ -350,7 +286,6 @@ button:hover { background: var(--primaryHover); }
   font-size: 18px;
   padding: 6px 10px;
   cursor: pointer;
-  color: #fff;
 }
 
 .modal-hint {
@@ -401,19 +336,12 @@ button:hover { background: var(--primaryHover); }
 @media (max-width: 900px) {
   body { padding: 14px; }
   .grid { grid-template-columns: 1fr; }
-
   .records-table { min-width: 720px; }
-
-  .mini-bar-row {
-    grid-template-columns: 70px 1fr 120px;
-  }
+  .mini-bar-row { grid-template-columns: 70px 1fr 120px; }
 }
 
 @media (max-width: 520px) {
   .records-table { min-width: 650px; }
-
   button { width: 100%; }
-
-  /* Keep some button rows flexible */
   .report-actions button { width: auto; }
 }

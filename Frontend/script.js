@@ -1,7 +1,7 @@
 /***********************
  * CONFIG
  ***********************/
-const PROD_API_BASE = "https://sea-bite-express.onrender.com"; // ✅ confirmed backend
+const PROD_API_BASE = "https://sea-bite-express.onrender.com"; // ✅ backend
 
 const API_BASE = (() => {
   const host = window.location.hostname;
@@ -19,12 +19,9 @@ function getVal(id) { return $(id)?.value ?? ""; }
 function setVal(id, v) { const el = $(id); if (el) el.value = v; }
 
 function escapeHtml(str) {
-  return String(str ?? "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#039;");
+  return String(str)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&#039;");
 }
 
 function formatCurrency(amount) {
@@ -183,8 +180,24 @@ async function api(path, options = {}) {
     err.status = res.status;
     throw err;
   }
-
   return data;
+}
+
+async function apiWithRetry(path, options = {}, retries = 4) {
+  let lastErr;
+  for (let i = 0; i < retries; i++) {
+    try {
+      return await api(path, options);
+    } catch (e) {
+      lastErr = e;
+      await new Promise(r => setTimeout(r, 1000 * (i + 1)));
+    }
+  }
+  throw lastErr;
+}
+
+async function wakeBackend() {
+  try { await api("/health"); } catch {}
 }
 
 async function apiOrQueue(action) {
@@ -196,6 +209,35 @@ async function apiOrQueue(action) {
     await queueAdd(action);
     await setQueueUI();
     return { ok: false, queued: true, error: e.message };
+  }
+}
+
+/***********************
+ * ✅ ADMIN RESET
+ ***********************/
+async function resetDatabase() {
+  if (!navigator.onLine) return alert("You must be online to reset database.");
+
+  const ok = confirm("⚠️ This will DELETE ALL DATA on the server database. Continue?");
+  if (!ok) return;
+
+  const token = prompt("Enter Admin Reset Token:");
+  if (!token) return alert("Reset cancelled.");
+
+  try {
+    // helps free Render wake up
+    await wakeBackend();
+
+    const resp = await apiWithRetry("/api/admin/reset", {
+      method: "POST",
+      headers: { "X-Admin-Token": token }
+    });
+
+    alert(`✅ ${resp.message || "Reset completed"}`);
+    await loadAll();
+  } catch (e) {
+    alert(`❌ Reset failed: ${e.message}`);
+    console.error(e);
   }
 }
 
@@ -251,7 +293,6 @@ async function loadAll() {
       await idbPutMany("expenses", expenses);
       await idbPutMany("products", products);
     } catch {
-      // fallback to local cache if server is temporarily unavailable
       sales = await idbGetAll("sales");
       expenses = await idbGetAll("expenses");
       products = await idbGetAll("products");
@@ -305,7 +346,7 @@ function openUsageModal() {
       row.innerHTML = `
         <div>
           <div class="u-name">${escapeHtml(p.name)}</div>
-          <div class="u-meta">Available: ${Number(p.qty)} ${escapeHtml(p.unit || "")}</div>
+          <div class="u-meta">Available: ${p.qty} ${escapeHtml(p.unit || "")}</div>
         </div>
         <input type="number" min="0" step="any" inputmode="decimal"
                data-pid="${p.id}" placeholder="Qty used" value="${val}" />
@@ -407,7 +448,7 @@ function renderFinanceTable() {
   allRecords.forEach(item => {
     table.innerHTML += `
       <tr>
-        <td>${item.type}</td>
+        <td>${escapeHtml(item.type)}</td>
         <td>${formatCurrency(item.amount)}</td>
         <td>${escapeHtml(item.desc)}</td>
         <td>${escapeHtml(item.used)}</td>
@@ -423,17 +464,6 @@ function renderFinanceTable() {
   });
 }
 
-/**
- * Mandatory products-used rule:
- * If you have products in inventory, you must record at least 1 item used for each sale.
- * This keeps accountability consistent.
- */
-function ensureProductsUsedMandatory() {
-  if (!products.length) return true; // no products in inventory; allow sale
-  if (!pendingUsage.length) return false; // mandatory if products exist
-  return true;
-}
-
 async function addSale() {
   const amount = parseFloat(getVal("saleAmount"));
   const description = getVal("saleDesc").trim();
@@ -443,14 +473,14 @@ async function addSale() {
     return;
   }
 
-  // Products used is mandatory (when products exist)
   if (products.length && pendingUsage.length === 0) {
-    alert("Products used is required for sales. Please select products used.");
-    openUsageModal();
-    return;
+    const ok = confirm("Do you want to record products used for this sale? (Recommended)");
+    if (ok) {
+      openUsageModal();
+      return;
+    }
   }
 
-  // validate stock locally before optimistic UI
   for (const it of pendingUsage) {
     const p = products.find(x => Number(x.id) === Number(it.product_id));
     if (p && Number(p.qty) - Number(it.qty_used) < 0) {
@@ -460,13 +490,11 @@ async function addSale() {
   }
 
   const tempId = `tmp-${Date.now()}`;
-  const nowIso = new Date().toISOString();
-
   const saleTemp = {
     id: tempId,
     amount,
     description,
-    created_at: nowIso,
+    created_at: new Date().toISOString(),
     items: pendingUsage.map(it => {
       const p = products.find(x => Number(x.id) === Number(it.product_id));
       return {
@@ -478,16 +506,14 @@ async function addSale() {
     })
   };
 
-  // optimistic UI
   sales.unshift(saleTemp);
   await idbPut("sales", saleTemp);
 
-  // optimistic inventory deduction
   for (const it of pendingUsage) {
     const p = products.find(x => Number(x.id) === Number(it.product_id));
     if (p) {
       p.qty = Number(p.qty) - Number(it.qty_used);
-      p.updated_at = nowIso;
+      p.updated_at = new Date().toISOString();
       await idbPut("products", p);
     }
   }
@@ -495,7 +521,6 @@ async function addSale() {
   renderFinanceTable();
   renderProductsTable();
 
-  // reset inputs
   setVal("saleAmount", "");
   setVal("saleDesc", "");
   pendingUsage = [];
@@ -514,23 +539,6 @@ async function addSale() {
     }
   });
 
-  if (navigator.onLine && result.ok) {
-    // ✅ replace temp record with server record (fixes “it saved but didn’t show right” issues)
-    const serverSale = result.data;
-
-    // remove temp
-    sales = sales.filter(s => String(s.id) !== String(tempId));
-    await idbDelete("sales", tempId);
-
-    // insert server record
-    sales.unshift(serverSale);
-    await idbPut("sales", serverSale);
-
-    // refresh products from server to stay correct
-    await loadAll();
-    return;
-  }
-
   if (navigator.onLine && !result.ok) {
     alert(`Sale failed: ${result.error}`);
     await loadAll();
@@ -546,11 +554,8 @@ async function addExpense() {
     return;
   }
 
-  const tempId = `tmp-${Date.now()}`;
-  const nowIso = new Date().toISOString();
-  const temp = { id: tempId, amount, description, created_at: nowIso };
+  const temp = { id: `tmp-${Date.now()}`, amount, description, created_at: new Date().toISOString() };
 
-  // optimistic
   expenses.unshift(temp);
   await idbPut("expenses", temp);
   renderFinanceTable();
@@ -563,19 +568,6 @@ async function addExpense() {
     path: "/api/finance/expenses",
     options: { method: "POST", body: JSON.stringify({ amount, description }) }
   });
-
-  if (navigator.onLine && result.ok) {
-    const serverExpense = result.data;
-
-    expenses = expenses.filter(e => String(e.id) !== String(tempId));
-    await idbDelete("expenses", tempId);
-
-    expenses.unshift(serverExpense);
-    await idbPut("expenses", serverExpense);
-
-    await loadAll();
-    return;
-  }
 
   if (navigator.onLine && !result.ok) {
     alert(`Expense failed: ${result.error}`);
@@ -600,8 +592,6 @@ async function deleteRecord(id, type) {
     if (navigator.onLine && !result.ok) {
       alert(`Delete failed: ${result.error}`);
       await loadAll();
-    } else if (navigator.onLine && result.ok) {
-      await loadAll(); // ensure inventory restored in UI
     }
     return;
   }
@@ -619,8 +609,6 @@ async function deleteRecord(id, type) {
   if (navigator.onLine && !result.ok) {
     alert(`Delete failed: ${result.error}`);
     await loadAll();
-  } else if (navigator.onLine && result.ok) {
-    await loadAll();
   }
 }
 
@@ -637,9 +625,9 @@ async function editRecord(id, type) {
     const description = String(newDescRaw).trim();
     if (!isValidAmount(amount) || !description) return alert("Invalid inputs");
 
-    // optimistic
     rec.amount = amount;
     rec.description = description;
+
     await idbPut("sales", rec);
     renderFinanceTable();
 
@@ -651,8 +639,6 @@ async function editRecord(id, type) {
 
     if (navigator.onLine && !result.ok) {
       alert(`Update failed: ${result.error}`);
-      await loadAll();
-    } else if (navigator.onLine && result.ok) {
       await loadAll();
     }
     return;
@@ -669,9 +655,9 @@ async function editRecord(id, type) {
   const description = String(newDescRaw).trim();
   if (!isValidAmount(amount) || !description) return alert("Invalid inputs");
 
-  // optimistic
   rec.amount = amount;
   rec.description = description;
+
   await idbPut("expenses", rec);
   renderFinanceTable();
 
@@ -684,20 +670,16 @@ async function editRecord(id, type) {
   if (navigator.onLine && !result.ok) {
     alert(`Update failed: ${result.error}`);
     await loadAll();
-  } else if (navigator.onLine && result.ok) {
-    await loadAll();
   }
 }
 
 /***********************
  * REPORTS / CSV
- * ✅ Finance email removed completely
  ***********************/
 async function generateReport(type) {
   lastReportType = type;
 
   if (!navigator.onLine) {
-    // offline snapshot of cached data
     const totalSales = sales.reduce((sum, s) => sum + (Number(s.amount) || 0), 0);
     const totalExpenses = expenses.reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
     const profit = totalSales - totalExpenses;
@@ -731,7 +713,7 @@ function exportCSV() {
 }
 
 /***********************
- * INVENTORY
+ * INVENTORY + LOSS
  ***********************/
 async function addProduct() {
   const name = getVal("pName").trim();
@@ -746,15 +728,12 @@ async function addProduct() {
   const initial_qty = Number(initialQtyRaw);
   if (initial_qty < 0 || Number.isNaN(initial_qty)) return alert("Initial quantity must be 0 or more.");
 
-  const tempId = `tmp-${Date.now()}`;
-  const nowIso = new Date().toISOString();
-
   const temp = {
-    id: tempId,
+    id: `tmp-${Date.now()}`,
     name, sku, unit,
     qty: initial_qty || 0,
     reorder_level,
-    updated_at: nowIso
+    updated_at: new Date().toISOString()
   };
 
   products.unshift(temp);
@@ -776,19 +755,6 @@ async function addProduct() {
       body: JSON.stringify({ name, sku, unit, reorder_level, initial_qty })
     }
   });
-
-  if (navigator.onLine && result.ok) {
-    // replace temp with server product
-    const serverProduct = result.data;
-    products = products.filter(p => String(p.id) !== String(tempId));
-    await idbDelete("products", tempId);
-
-    products.unshift(serverProduct);
-    await idbPut("products", serverProduct);
-
-    await loadAll();
-    return;
-  }
 
   if (navigator.onLine && !result.ok) {
     alert(`Product create failed: ${result.error}`);
@@ -824,17 +790,15 @@ async function editProduct(id) {
   if (navigator.onLine && !result.ok) {
     alert(`Product update failed: ${result.error}`);
     await loadAll();
-  } else if (navigator.onLine && result.ok) {
-    await loadAll();
   }
 }
 
 async function deleteProduct(id) {
-  if (!confirm("Delete this product? (It may be archived/soft-deleted)")) return;
+  if (!confirm("Delete this product?")) return;
 
+  // optimistic UI remove
   products = products.filter(x => String(x.id) !== String(id));
   await idbDelete("products", id);
-
   pendingUsage = pendingUsage.filter(x => String(x.product_id) !== String(id));
 
   renderProductsTable();
@@ -846,10 +810,9 @@ async function deleteProduct(id) {
     options: { method: "DELETE" }
   });
 
+  // if server blocks delete (409), reload to restore
   if (navigator.onLine && !result.ok) {
     alert(`Product delete failed: ${result.error}`);
-    await loadAll();
-  } else if (navigator.onLine && result.ok) {
     await loadAll();
   }
 }
@@ -867,7 +830,6 @@ async function stockMove(productId, type) {
 
   if (type === "OUT" && Number(p.qty) - qty < 0) return alert("Insufficient stock.");
 
-  // optimistic
   p.qty = type === "IN" ? Number(p.qty) + qty : Number(p.qty) - qty;
   p.updated_at = new Date().toISOString();
   await idbPut("products", p);
@@ -883,8 +845,6 @@ async function stockMove(productId, type) {
 
   if (navigator.onLine && !result.ok) {
     alert(`Stock move failed: ${result.error}`);
-    await loadAll();
-  } else if (navigator.onLine && result.ok) {
     await loadAll();
   }
 }
@@ -902,7 +862,6 @@ async function recordLoss(productId, reason) {
 
   if (Number(p.qty) - qty < 0) return alert("Insufficient stock.");
 
-  // optimistic
   p.qty = Number(p.qty) - qty;
   p.updated_at = new Date().toISOString();
   await idbPut("products", p);
@@ -918,8 +877,6 @@ async function recordLoss(productId, reason) {
 
   if (navigator.onLine && !result.ok) {
     alert(`Loss record failed: ${result.error}`);
-    await loadAll();
-  } else if (navigator.onLine && result.ok) {
     await loadAll();
   }
 }
@@ -942,8 +899,8 @@ function renderProductsTable() {
         <td>${escapeHtml(p.name)}</td>
         <td>${escapeHtml(p.sku || "")}</td>
         <td>${escapeHtml(p.unit || "pcs")}</td>
-        <td>${Number(p.qty) || 0}</td>
-        <td>${Number(p.reorder_level) || 0}</td>
+        <td>${p.qty}</td>
+        <td>${p.reorder_level || 0}</td>
         <td>
           <div class="inv-actions">
             <button class="in-btn" type="button" onclick="stockMove('${p.id}', 'IN')">Stock IN</button>
@@ -979,20 +936,17 @@ async function emailInventoryCSV() {
       body: JSON.stringify({ to })
     });
 
-    if (status) status.textContent = `✅ Sent! ${JSON.stringify(resp)}`;
+    if (status) status.textContent = `✅ Sent!`;
     setVal("invEmail", "");
   } catch (e) {
     const payload = e.data || { error: e.message };
-    if (status) status.textContent = `❌ Failed: ${JSON.stringify(payload)}`;
+    if (status) status.textContent = `❌ Failed: ${payload?.error || e.message}`;
 
     const msg = payload?.error || e.message || "";
-
-    // ✅ if email is not configured OR network fails → prompt Email Easy
     if (isMailNotConfigured(payload) || isNetworkMailError(msg)) {
       const ok = confirm("SMTP email is not available right now. Use Email (Easy) instead?");
       if (ok) return emailInventoryEasy();
     }
-
     alert(`❌ Inventory email failed: ${msg}`);
   }
 }
@@ -1024,34 +978,6 @@ Regards.`;
 }
 
 /***********************
- * ADMIN RESET DATABASE
- ***********************/
-async function resetDatabase() {
-  if (!navigator.onLine) return alert("You must be online to reset the database.");
-
-  const confirmWord = prompt('Type RESET to clear ALL backend data (test reset):');
-  if (confirmWord !== "RESET") return alert("Cancelled.");
-
-  const adminKey = prompt("Enter ADMIN KEY:");
-  if (!adminKey) return alert("Admin key is required.");
-
-  try {
-    const resp = await api("/api/admin/reset", {
-      method: "POST",
-      headers: { "x-admin-key": adminKey }
-    });
-
-    alert("✅ Database cleared successfully.");
-    await loadAll();
-    return resp;
-  } catch (e) {
-    alert(`❌ Reset failed: ${e.message}`);
-  }
-}
-
-$("resetDbBtn")?.addEventListener("click", resetDatabase);
-
-/***********************
  * QUEUE SYNC
  ***********************/
 async function flushQueue() {
@@ -1065,7 +991,6 @@ async function flushQueue() {
       await api(item.path, item.options);
       await queueClearItem(item.qid);
     } catch {
-      // stop if backend still failing; keep remaining in queue
       break;
     }
   }

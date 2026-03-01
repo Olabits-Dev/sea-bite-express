@@ -1,11 +1,9 @@
 // Backend/server.js
 require("dotenv").config();
 
-// ✅ Force IPv4 first to fix SMTP ENETUNREACH on IPv6
+// ✅ Force IPv4 first (helps SMTP on some hosts)
 const dns = require("dns");
-if (dns.setDefaultResultOrder) {
-  dns.setDefaultResultOrder("ipv4first");
-}
+if (dns.setDefaultResultOrder) dns.setDefaultResultOrder("ipv4first");
 
 const express = require("express");
 const cors = require("cors");
@@ -19,14 +17,14 @@ app.use(express.json({ limit: "2mb" }));
 
 /**
  * CORS (Render + local)
+ * - Allows your local dev + any *.onrender.com frontend
  */
 const allowedOrigins = new Set([
   "http://localhost:5500",
   "http://127.0.0.1:5500",
   "http://localhost:3000",
   "http://127.0.0.1:3000",
-  "https://sea-bite-express.onrender.com",
-  "https://sea-bite-express-1.onrender.com"
+  "https://sea-bite-express-1.onrender.com", // your frontend
 ]);
 
 app.use(
@@ -35,10 +33,10 @@ app.use(
       if (!origin) return cb(null, true);
       if (allowedOrigins.has(origin)) return cb(null, true);
       if (/^https:\/\/.*\.onrender\.com$/.test(origin)) return cb(null, true);
-      return cb(null, false);
+      return cb(new Error("CORS blocked"), false);
     },
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"]
+    allowedHeaders: ["Content-Type", "Authorization", "X-Admin-Token"],
   })
 );
 app.options("*", cors());
@@ -52,7 +50,8 @@ app.get("/", (req, res) => {
     message: "SeaBite Express API is running",
     health: "/health",
     inventory: "/api/inventory/products",
-    finance: "/api/finance/sales"
+    finance: "/api/finance/sales",
+    adminReset: "/api/admin/reset",
   });
 });
 
@@ -67,6 +66,52 @@ app.use("/api/inventory", inventoryRoutes);
 app.use("/api/finance", financeRoutes);
 
 /**
+ * ✅ Admin Reset DB (token protected + locked)
+ * ENV required on Render:
+ * - ADMIN_RESET_TOKEN=your-secret
+ */
+app.post("/api/admin/reset", async (req, res, next) => {
+  const token = req.headers["x-admin-token"];
+  if (!process.env.ADMIN_RESET_TOKEN || token !== process.env.ADMIN_RESET_TOKEN) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+
+  const client = await pool.connect();
+  try {
+    // ✅ one reset at a time across all servers
+    await client.query("SELECT pg_advisory_lock(777001)");
+    await client.query("BEGIN");
+
+    // ✅ Truncate in safe order (FK-safe) + reset IDs
+    await client.query(`
+      TRUNCATE TABLE
+        sale_items,
+        sales,
+        expenses,
+        stock_movements,
+        products
+      RESTART IDENTITY CASCADE;
+    `);
+
+    // Optional legacy tables (only if they exist)
+    // await client.query(`TRUNCATE TABLE inventory_moves RESTART IDENTITY CASCADE;`);
+    // await client.query(`TRUNCATE TABLE inventory_losses RESTART IDENTITY CASCADE;`);
+    // await client.query(`TRUNCATE TABLE losses RESTART IDENTITY CASCADE;`);
+
+    await client.query("COMMIT");
+    res.json({ ok: true, message: "Database reset completed" });
+  } catch (e) {
+    await client.query("ROLLBACK");
+    next(e);
+  } finally {
+    try {
+      await client.query("SELECT pg_advisory_unlock(777001)");
+    } catch {}
+    client.release();
+  }
+});
+
+/**
  * Error handler
  */
 app.use((err, req, res, next) => {
@@ -75,19 +120,15 @@ app.use((err, req, res, next) => {
 });
 
 /**
- * DB Migration + Schema Alignment
- * - Creates required tables
- * - Ensures stock_movements has reason/note (backward compatible)
- * - Ensures losses table exists (inventory_losses legacy name)
- * - Creates compatibility VIEWS: inventory_moves, inventory_losses
- *   ✅ Safe even if old TABLE exists with same name (drops it)
+ * ✅ Auto Migration (canonical schema only)
+ * - avoids your previous "inventory_moves is not a view" crash
  */
 async function runMigrations() {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
 
-    // ---- Core tables ----
+    // products
     await client.query(`
       CREATE TABLE IF NOT EXISTS products (
         id SERIAL PRIMARY KEY,
@@ -100,10 +141,11 @@ async function runMigrations() {
       );
     `);
 
+    // stock_movements
     await client.query(`
       CREATE TABLE IF NOT EXISTS stock_movements (
         id SERIAL PRIMARY KEY,
-        product_id INT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+        product_id INT NOT NULL REFERENCES products(id) ON DELETE RESTRICT,
         type TEXT NOT NULL CHECK (type IN ('IN','OUT')),
         qty NUMERIC NOT NULL,
         reason TEXT DEFAULT '',
@@ -112,26 +154,7 @@ async function runMigrations() {
       );
     `);
 
-    // Ensure columns exist (for old DBs)
-    await client.query(`
-      DO $$
-      BEGIN
-        IF NOT EXISTS (
-          SELECT 1 FROM information_schema.columns
-          WHERE table_name='stock_movements' AND column_name='reason'
-        ) THEN
-          ALTER TABLE stock_movements ADD COLUMN reason TEXT DEFAULT '';
-        END IF;
-
-        IF NOT EXISTS (
-          SELECT 1 FROM information_schema.columns
-          WHERE table_name='stock_movements' AND column_name='note'
-        ) THEN
-          ALTER TABLE stock_movements ADD COLUMN note TEXT DEFAULT '';
-        END IF;
-      END $$;
-    `);
-
+    // sales
     await client.query(`
       CREATE TABLE IF NOT EXISTS sales (
         id SERIAL PRIMARY KEY,
@@ -141,15 +164,17 @@ async function runMigrations() {
       );
     `);
 
+    // sale_items
     await client.query(`
       CREATE TABLE IF NOT EXISTS sale_items (
         id SERIAL PRIMARY KEY,
         sale_id INT NOT NULL REFERENCES sales(id) ON DELETE CASCADE,
-        product_id INT NOT NULL REFERENCES products(id),
+        product_id INT NOT NULL REFERENCES products(id) ON DELETE RESTRICT,
         qty_used NUMERIC NOT NULL
       );
     `);
 
+    // expenses
     await client.query(`
       CREATE TABLE IF NOT EXISTS expenses (
         id SERIAL PRIMARY KEY,
@@ -159,74 +184,17 @@ async function runMigrations() {
       );
     `);
 
-    /**
-     * losses table (for spoilage/mishandling reports)
-     * Your app currently records losses as stock_movements (OUT with reason),
-     * but some older schema uses a separate losses table.
-     * We create it for compatibility, and we’ll map inventory_losses -> losses via VIEW.
-     */
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS losses (
-        id SERIAL PRIMARY KEY,
-        product_id INT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
-        qty NUMERIC NOT NULL,
-        reason TEXT DEFAULT '',
-        note TEXT DEFAULT '',
-        created_at TIMESTAMP DEFAULT NOW()
-      );
-    `);
-
-    // ---- Compatibility Views (safe drop: TABLE or VIEW) ----
-    await client.query(`
-      DO $$
-      BEGIN
-        -- inventory_moves -> stock_movements
-        IF EXISTS (SELECT 1 FROM pg_class WHERE relname='inventory_moves' AND relkind='r') THEN
-          EXECUTE 'DROP TABLE inventory_moves CASCADE';
-        END IF;
-        IF EXISTS (SELECT 1 FROM pg_class WHERE relname='inventory_moves' AND relkind='v') THEN
-          EXECUTE 'DROP VIEW inventory_moves CASCADE';
-        END IF;
-        EXECUTE 'CREATE VIEW inventory_moves AS SELECT * FROM stock_movements';
-
-        -- inventory_losses -> losses
-        IF EXISTS (SELECT 1 FROM pg_class WHERE relname='inventory_losses' AND relkind='r') THEN
-          EXECUTE 'DROP TABLE inventory_losses CASCADE';
-        END IF;
-        IF EXISTS (SELECT 1 FROM pg_class WHERE relname='inventory_losses' AND relkind='v') THEN
-          EXECUTE 'DROP VIEW inventory_losses CASCADE';
-        END IF;
-        EXECUTE 'CREATE VIEW inventory_losses AS SELECT * FROM losses';
-      END $$;
-    `);
-
-    /**
-     * Optional: a safe reset helper function you can call from an admin route later.
-     * (Doesn't run now; just creates the function.)
-     */
-    await client.query(`
-      CREATE OR REPLACE FUNCTION reset_seabite_data()
-      RETURNS void
-      LANGUAGE plpgsql
-      AS $$
-      BEGIN
-        -- delete children first
-        DELETE FROM sale_items;
-        DELETE FROM sales;
-        DELETE FROM expenses;
-        DELETE FROM losses;
-        DELETE FROM stock_movements;
-        DELETE FROM products;
-      END;
-      $$;
-    `);
+    // Helpful indexes
+    await client.query(`CREATE INDEX IF NOT EXISTS idx_stock_movements_product_id ON stock_movements(product_id);`);
+    await client.query(`CREATE INDEX IF NOT EXISTS idx_sale_items_product_id ON sale_items(product_id);`);
+    await client.query(`CREATE INDEX IF NOT EXISTS idx_sales_created_at ON sales(created_at);`);
+    await client.query(`CREATE INDEX IF NOT EXISTS idx_expenses_created_at ON expenses(created_at);`);
 
     await client.query("COMMIT");
     console.log("✅ Database migration completed");
   } catch (err) {
     await client.query("ROLLBACK");
     console.error("❌ Migration failed:", err);
-    // Keep exiting so Render shows the real migration error
     process.exit(1);
   } finally {
     client.release();
