@@ -1,7 +1,7 @@
 /***********************
  * CONFIG
  ***********************/
-const PROD_API_BASE = "https://sea-bite-express.onrender.com"; // ✅ 
+const PROD_API_BASE = "https://sea-bite-express.onrender.com"; // ✅ CHANGE THIS
 
 const API_BASE = (() => {
   const host = window.location.hostname;
@@ -303,8 +303,8 @@ function openUsageModal() {
       row.className = "usage-row";
       row.innerHTML = `
         <div>
-          <div class="u-name">${p.name}</div>
-          <div class="u-meta">Available: ${p.qty} ${p.unit || ""}</div>
+          <div class="u-name">${escapeHtml(p.name)}</div>
+          <div class="u-meta">Available: ${p.qty} ${escapeHtml(p.unit || "")}</div>
         </div>
         <input type="number" min="0" step="any" inputmode="decimal"
                data-pid="${p.id}" placeholder="Qty used" value="${val}" />
@@ -379,6 +379,9 @@ function formatProductsUsed(items) {
     .join(", ");
 }
 
+/**
+ * ✅ UPDATED: Adds data-label for mobile stacked table mode
+ */
 function renderFinanceTable() {
   const table = $("recordTable");
   if (!table) return;
@@ -406,12 +409,12 @@ function renderFinanceTable() {
   allRecords.forEach(item => {
     table.innerHTML += `
       <tr>
-        <td>${item.type}</td>
-        <td>${formatCurrency(item.amount)}</td>
-        <td>${escapeHtml(item.desc)}</td>
-        <td>${escapeHtml(item.used)}</td>
-        <td>${formatDateTime(item.date)}</td>
-        <td>
+        <td data-label="Type">${escapeHtml(item.type)}</td>
+        <td data-label="Amount">${escapeHtml(formatCurrency(item.amount))}</td>
+        <td data-label="Description">${escapeHtml(item.desc)}</td>
+        <td data-label="Products Used">${escapeHtml(item.used || "")}</td>
+        <td data-label="Date & Time">${escapeHtml(formatDateTime(item.date))}</td>
+        <td data-label="Action">
           <div class="action-buttons">
             <button class="edit-btn" type="button" onclick="editRecord('${item.id}','${item.type}')">Edit</button>
             <button class="delete-btn" type="button" onclick="deleteRecord('${item.id}','${item.type}')">Delete</button>
@@ -633,7 +636,6 @@ async function editRecord(id, type) {
 
 /***********************
  * REPORTS / CSV
- * ✅ Finance email removed completely
  ***********************/
 async function generateReport(type) {
   lastReportType = type;
@@ -672,7 +674,7 @@ function exportCSV() {
 }
 
 /***********************
- * INVENTORY + LOSS
+ * INVENTORY
  ***********************/
 async function addProduct() {
   const name = getVal("pName").trim();
@@ -839,6 +841,9 @@ async function recordLoss(productId, reason) {
   }
 }
 
+/**
+ * ✅ UPDATED: Adds data-label for mobile stacked table mode
+ */
 function renderProductsTable() {
   const tbody = $("productsTable");
   if (!tbody) return;
@@ -854,12 +859,12 @@ function renderProductsTable() {
   products.forEach(p => {
     tbody.innerHTML += `
       <tr>
-        <td>${escapeHtml(p.name)}</td>
-        <td>${escapeHtml(p.sku || "")}</td>
-        <td>${escapeHtml(p.unit || "pcs")}</td>
-        <td>${p.qty}</td>
-        <td>${p.reorder_level || 0}</td>
-        <td>
+        <td data-label="Name">${escapeHtml(p.name)}</td>
+        <td data-label="SKU">${escapeHtml(p.sku || "")}</td>
+        <td data-label="Unit">${escapeHtml(p.unit || "pcs")}</td>
+        <td data-label="Qty">${escapeHtml(p.qty)}</td>
+        <td data-label="Reorder">${escapeHtml(p.reorder_level || 0)}</td>
+        <td data-label="Action">
           <div class="inv-actions">
             <button class="in-btn" type="button" onclick="stockMove('${p.id}', 'IN')">Stock IN</button>
             <button class="out-btn" type="button" onclick="stockMove('${p.id}', 'OUT')">Stock OUT</button>
@@ -902,7 +907,6 @@ async function emailInventoryCSV() {
 
     const msg = payload?.error || e.message || "";
 
-    // ✅ if email is not configured OR network fails → prompt Email Easy
     if (isMailNotConfigured(payload) || isNetworkMailError(msg)) {
       const ok = confirm("SMTP email is not available right now. Use Email (Easy) instead?");
       if (ok) return emailInventoryEasy();
