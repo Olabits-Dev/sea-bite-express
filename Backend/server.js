@@ -1,6 +1,12 @@
 // Backend/server.js
 require("dotenv").config();
 
+// ✅ Force IPv4 first to fix SMTP ENETUNREACH on IPv6
+const dns = require("dns");
+if (dns.setDefaultResultOrder) {
+  dns.setDefaultResultOrder("ipv4first");
+}
+
 const express = require("express");
 const cors = require("cors");
 
@@ -59,7 +65,7 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: err.message || "Internal server error" });
 });
 
-// --- Auto Migration (No Render shell needed) ---
+// --- Auto Migration ---
 async function runMigrations() {
   try {
     await pool.query(`
@@ -74,7 +80,6 @@ async function runMigrations() {
       );
     `);
 
-    // ✅ include reason column here for new DBs
     await pool.query(`
       CREATE TABLE IF NOT EXISTS stock_movements (
         id SERIAL PRIMARY KEY,
@@ -87,7 +92,6 @@ async function runMigrations() {
       );
     `);
 
-    // ✅ for older DBs that already created stock_movements without reason
     await pool.query(`
       DO $$
       BEGIN

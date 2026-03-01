@@ -1,4 +1,7 @@
-const PROD_API_BASE = "https://sea-bite-express.onrender.com"; // <-- set once
+/***********************
+ * CONFIG
+ ***********************/
+const PROD_API_BASE = "https://sea-bite-express.onrender.com"; // ✅ 
 
 const API_BASE = (() => {
   const host = window.location.hostname;
@@ -8,9 +11,13 @@ const API_BASE = (() => {
 
 console.log("API_BASE:", API_BASE);
 
-// ======================
-// Email Status Helpers (Finance)
-// ======================
+/***********************
+ * HELPERS
+ ***********************/
+function $(id) { return document.getElementById(id); }
+function getVal(id) { return $(id)?.value ?? ""; }
+function setVal(id, v) { const el = $(id); if (el) el.value = v; }
+
 function escapeHtml(str) {
   return String(str)
     .replace(/&/g, "&amp;")
@@ -19,8 +26,43 @@ function escapeHtml(str) {
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#039;");
 }
+
+function formatCurrency(amount) {
+  return new Intl.NumberFormat("en-NG", { style: "currency", currency: "NGN" }).format(Number(amount) || 0);
+}
+
+function formatDateTime(value) {
+  if (!value) return "";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return String(value);
+  return d.toLocaleString();
+}
+
+function isValidAmount(n) { return Number.isFinite(n) && n > 0; }
+function isValidQty(n) { return Number.isFinite(n) && n > 0; }
+
+function openMailto(to, subject, body) {
+  const url = `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+  window.location.href = url;
+}
+
+function isNetworkMailError(msg = "") {
+  const m = String(msg).toUpperCase();
+  return (
+    m.includes("ENETUNREACH") ||
+    m.includes("ECONNREFUSED") ||
+    m.includes("ETIMEDOUT") ||
+    m.includes("EHOSTUNREACH") ||
+    m.includes("NETWORK") ||
+    m.includes("UNREACH")
+  );
+}
+
+/***********************
+ * STATUS UI
+ ***********************/
 function showEmailStatus(state, title, obj) {
-  const box = document.getElementById("emailStatus");
+  const box = $("emailStatus");
   if (!box) return;
 
   box.style.display = "block";
@@ -30,17 +72,22 @@ function showEmailStatus(state, title, obj) {
   box.innerHTML = `<strong>${title}</strong>${json}`;
 }
 
-// ======================
-// Easy Mailto Fallback (works even if SMTP fails)
-// ======================
-function openMailto(to, subject, body) {
-  const url = `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-  window.location.href = url;
+function setNetUI() {
+  const net = $("netStatus");
+  if (!net) return;
+  net.textContent = navigator.onLine ? "Status: Online" : "Status: Offline (queued)";
 }
 
-// ======================
-// IndexedDB (Offline Queue + Cached Data)
-// ======================
+async function setQueueUI() {
+  const q = $("queueStatus");
+  if (!q) return;
+  const items = await queueAll();
+  q.textContent = `Pending: ${items.length}`;
+}
+
+/***********************
+ * IndexedDB (offline queue + cached data)
+ ***********************/
 const DB_NAME = "seabite_offline_db";
 const DB_VERSION = 2;
 
@@ -70,6 +117,7 @@ async function idbPut(store, value) {
     tx.onerror = () => reject(tx.error);
   });
 }
+
 async function idbPutMany(store, values) {
   const db = await openDB();
   return new Promise((resolve, reject) => {
@@ -80,6 +128,7 @@ async function idbPutMany(store, values) {
     tx.onerror = () => reject(tx.error);
   });
 }
+
 async function idbGetAll(store) {
   const db = await openDB();
   return new Promise((resolve, reject) => {
@@ -89,6 +138,7 @@ async function idbGetAll(store) {
     req.onerror = () => reject(req.error);
   });
 }
+
 async function idbDelete(store, key) {
   const db = await openDB();
   return new Promise((resolve, reject) => {
@@ -99,6 +149,7 @@ async function idbDelete(store, key) {
   });
 }
 
+// Queue
 async function queueAdd(action) {
   const db = await openDB();
   return new Promise((resolve, reject) => {
@@ -108,15 +159,15 @@ async function queueAdd(action) {
     tx.onerror = () => reject(tx.error);
   });
 }
+
 async function queueAll() { return idbGetAll("queue"); }
 async function queueClearItem(qid) { return idbDelete("queue", qid); }
 
-// ======================
-// API helper (body-aware headers)
-// ======================
+/***********************
+ * API
+ ***********************/
 async function api(path, options = {}) {
   const url = `${API_BASE}${path}`;
-
   const headers = { ...(options.headers || {}) };
   const hasBody = options.body !== undefined && options.body !== null;
   if (hasBody && !headers["Content-Type"]) headers["Content-Type"] = "application/json";
@@ -154,9 +205,9 @@ async function apiOrQueue(action) {
   }
 }
 
-// ======================
-// State
-// ======================
+/***********************
+ * STATE
+ ***********************/
 let deferredPrompt;
 let lastReportType = null;
 
@@ -165,38 +216,9 @@ let expenses = [];
 let products = [];
 let pendingUsage = [];
 
-// Helpers
-function $(id) { return document.getElementById(id); }
-function getVal(id) { return $(id)?.value ?? ""; }
-function setVal(id, v) { const el = $(id); if (el) el.value = v; }
-
-function formatCurrency(amount) {
-  return new Intl.NumberFormat("en-NG", { style: "currency", currency: "NGN" }).format(Number(amount) || 0);
-}
-function formatDateTime(value) {
-  if (!value) return "";
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return String(value);
-  return d.toLocaleString();
-}
-function isValidAmount(n) { return Number.isFinite(n) && n > 0; }
-function isValidQty(n) { return Number.isFinite(n) && n > 0; }
-
-function setNetUI() {
-  const net = $("netStatus");
-  if (!net) return;
-  net.textContent = navigator.onLine ? "Status: Online" : "Status: Offline (queued)";
-}
-async function setQueueUI() {
-  const q = $("queueStatus");
-  if (!q) return;
-  const items = await queueAll();
-  q.textContent = `Pending: ${items.length}`;
-}
-
-// ======================
-// Mini chart
-// ======================
+/***********************
+ * MINI CHART (lightweight bars)
+ ***********************/
 function updateMiniChart(totalSales, totalExpenses) {
   const miniChart = $("miniChart");
   if (!miniChart) return;
@@ -218,9 +240,9 @@ function updateMiniChart(totalSales, totalExpenses) {
   miniChartTotal.textContent = `Max: ${formatCurrency(maxVal)}`;
 }
 
-// ======================
-// Load Data
-// ======================
+/***********************
+ * LOAD DATA
+ ***********************/
 async function loadAll() {
   setNetUI();
   await setQueueUI();
@@ -250,12 +272,12 @@ async function loadAll() {
   renderUsageSummary();
 }
 
-// ======================
-// Products Used Modal
-// ======================
+/***********************
+ * PRODUCTS USED MODAL
+ ***********************/
 function openUsageModal() {
   if (!products.length) {
-    alert("No products in inventory yet. Add products and stock them first.");
+    alert("No products in inventory yet. Add products first.");
     return;
   }
 
@@ -300,19 +322,22 @@ function openUsageModal() {
   modal.classList.add("show");
   modal.setAttribute("aria-hidden", "false");
 }
+
 function closeUsageModal() {
   const modal = $("usageModal");
   if (!modal) return;
   modal.classList.remove("show");
   modal.setAttribute("aria-hidden", "true");
 }
+
 function clearUsage() {
   pendingUsage = [];
   renderUsageSummary();
   const list = $("usageList");
   if (!list) return;
-  list.querySelectorAll("input[data-pid]").forEach(i => i.value = 0);
+  list.querySelectorAll("input[data-pid]").forEach(i => (i.value = 0));
 }
+
 function saveUsage() {
   const list = $("usageList");
   if (!list) return;
@@ -330,6 +355,7 @@ function saveUsage() {
   renderUsageSummary();
   closeUsageModal();
 }
+
 function renderUsageSummary() {
   const box = $("usageSummary");
   if (!box) return;
@@ -349,9 +375,59 @@ function renderUsageSummary() {
   box.textContent = lines.join(" • ");
 }
 
-// ======================
-// Finance CRUD
-// ======================
+/***********************
+ * FINANCE CRUD
+ ***********************/
+function formatProductsUsed(items) {
+  if (!items || !items.length) return "";
+  return items
+    .map(it => `${it.product_name || ""} x${it.qty_used}${it.product_unit ? " " + it.product_unit : ""}`.trim())
+    .join(", ");
+}
+
+function renderFinanceTable() {
+  const table = $("recordTable");
+  if (!table) return;
+  table.innerHTML = "";
+
+  const allRecords = [
+    ...sales.map(s => ({
+      id: s.id,
+      type: "Sale",
+      amount: s.amount,
+      desc: s.description,
+      used: formatProductsUsed(s.items),
+      date: s.created_at
+    })),
+    ...expenses.map(e => ({
+      id: e.id,
+      type: "Expense",
+      amount: e.amount,
+      desc: e.description,
+      used: "",
+      date: e.created_at
+    }))
+  ].sort((a, b) => new Date(b.date) - new Date(a.date));
+
+  allRecords.forEach(item => {
+    table.innerHTML += `
+      <tr>
+        <td>${item.type}</td>
+        <td>${formatCurrency(item.amount)}</td>
+        <td>${escapeHtml(item.desc)}</td>
+        <td>${escapeHtml(item.used)}</td>
+        <td>${formatDateTime(item.date)}</td>
+        <td>
+          <div class="action-buttons">
+            <button class="edit-btn" type="button" onclick="editRecord('${item.id}','${item.type}')">Edit</button>
+            <button class="delete-btn" type="button" onclick="deleteRecord('${item.id}','${item.type}')">Delete</button>
+          </div>
+        </td>
+      </tr>
+    `;
+  });
+}
+
 async function addSale() {
   const amount = parseFloat(getVal("saleAmount"));
   const description = getVal("saleDesc").trim();
@@ -394,6 +470,7 @@ async function addSale() {
     })
   };
 
+  // optimistic local
   sales.unshift(saleTemp);
   await idbPut("sales", saleTemp);
 
@@ -429,21 +506,7 @@ async function addSale() {
 
   if (navigator.onLine && !result.ok) {
     alert(`Sale failed: ${result.error}`);
-
-    sales = sales.filter(s => String(s.id) !== String(tempId));
-    await idbDelete("sales", tempId);
-
-    for (const it of saleTemp.items) {
-      const p = products.find(x => Number(x.id) === Number(it.product_id));
-      if (p) {
-        p.qty = Number(p.qty) + Number(it.qty_used);
-        p.updated_at = new Date().toISOString();
-        await idbPut("products", p);
-      }
-    }
-
-    renderFinanceTable();
-    renderProductsTable();
+    await loadAll();
   }
 }
 
@@ -457,6 +520,7 @@ async function addExpense() {
   }
 
   const temp = { id: `tmp-${Date.now()}`, amount, description, created_at: new Date().toISOString() };
+
   expenses.unshift(temp);
   await idbPut("expenses", temp);
   renderFinanceTable();
@@ -472,9 +536,7 @@ async function addExpense() {
 
   if (navigator.onLine && !result.ok) {
     alert(`Expense failed: ${result.error}`);
-    expenses = expenses.filter(e => String(e.id) !== String(temp.id));
-    await idbDelete("expenses", temp.id);
-    renderFinanceTable();
+    await loadAll();
   }
 }
 
@@ -482,23 +544,10 @@ async function deleteRecord(id, type) {
   if (!confirm(`Delete this ${type.toLowerCase()} record?`)) return;
 
   if (type === "Sale") {
-    const sale = sales.find(s => String(s.id) === String(id));
+    // optimistic local
     sales = sales.filter(s => String(s.id) !== String(id));
     await idbDelete("sales", id);
-
-    if (sale?.items?.length) {
-      for (const it of sale.items) {
-        const p = products.find(x => Number(x.id) === Number(it.product_id));
-        if (p) {
-          p.qty = Number(p.qty) + Number(it.qty_used);
-          p.updated_at = new Date().toISOString();
-          await idbPut("products", p);
-        }
-      }
-    }
-
     renderFinanceTable();
-    renderProductsTable();
 
     const result = await apiOrQueue({
       kind: "sale_delete",
@@ -510,21 +559,23 @@ async function deleteRecord(id, type) {
       alert(`Delete failed: ${result.error}`);
       await loadAll();
     }
-  } else {
-    expenses = expenses.filter(e => String(e.id) !== String(id));
-    await idbDelete("expenses", id);
-    renderFinanceTable();
+    return;
+  }
 
-    const result = await apiOrQueue({
-      kind: "expense_delete",
-      path: `/api/finance/expenses/${id}`,
-      options: { method: "DELETE" }
-    });
+  // Expense
+  expenses = expenses.filter(e => String(e.id) !== String(id));
+  await idbDelete("expenses", id);
+  renderFinanceTable();
 
-    if (navigator.onLine && !result.ok) {
-      alert(`Delete failed: ${result.error}`);
-      await loadAll();
-    }
+  const result = await apiOrQueue({
+    kind: "expense_delete",
+    path: `/api/finance/expenses/${id}`,
+    options: { method: "DELETE" }
+  });
+
+  if (navigator.onLine && !result.ok) {
+    alert(`Delete failed: ${result.error}`);
+    await loadAll();
   }
 }
 
@@ -560,6 +611,7 @@ async function editRecord(id, type) {
     return;
   }
 
+  // Expense
   const rec = expenses.find(x => String(x.id) === String(id));
   if (!rec) return alert("Record not found.");
 
@@ -589,59 +641,9 @@ async function editRecord(id, type) {
   }
 }
 
-function formatProductsUsed(items) {
-  if (!items || !items.length) return "";
-  return items
-    .map(it => `${it.product_name || ""} x${it.qty_used}${it.product_unit ? " " + it.product_unit : ""}`.trim())
-    .join(", ");
-}
-
-function renderFinanceTable() {
-  const table = $("recordTable");
-  if (!table) return;
-  table.innerHTML = "";
-
-  const allRecords = [
-    ...sales.map(s => ({
-      id: s.id,
-      type: "Sale",
-      amount: s.amount,
-      desc: s.description,
-      used: formatProductsUsed(s.items),
-      date: s.created_at
-    })),
-    ...expenses.map(e => ({
-      id: e.id,
-      type: "Expense",
-      amount: e.amount,
-      desc: e.description,
-      used: "",
-      date: e.created_at
-    }))
-  ].sort((a, b) => new Date(b.date) - new Date(a.date));
-
-  allRecords.forEach(item => {
-    table.innerHTML += `
-      <tr>
-        <td>${item.type}</td>
-        <td>${formatCurrency(item.amount)}</td>
-        <td>${item.desc}</td>
-        <td>${item.used}</td>
-        <td>${formatDateTime(item.date)}</td>
-        <td>
-          <div class="action-buttons">
-            <button class="edit-btn" type="button" onclick="editRecord('${item.id}','${item.type}')">Edit</button>
-            <button class="delete-btn" type="button" onclick="deleteRecord('${item.id}','${item.type}')">Delete</button>
-          </div>
-        </td>
-      </tr>
-    `;
-  });
-}
-
-// ======================
-// Reports / CSV / Email
-// ======================
+/***********************
+ * REPORTS / CSV / EMAIL
+ ***********************/
 async function generateReport(type) {
   lastReportType = type;
 
@@ -678,6 +680,7 @@ function exportCSV() {
   window.open(`${API_BASE}/api/finance/export/finance.csv?period=${encodeURIComponent(lastReportType)}`, "_blank");
 }
 
+// SMTP finance email + JSON + fallback
 async function emailFinanceCSV() {
   if (!lastReportType) {
     showEmailStatus("error", "Please generate a report first.", { error: "No report type selected." });
@@ -704,12 +707,19 @@ async function emailFinanceCSV() {
 
     showEmailStatus("success", "Finance report sent successfully ✅", resp);
     setVal("financeEmail", "");
-  } catch (err) {
-    showEmailStatus("error", "Failed to send finance report ❌", err.data || { error: err.message });
+  } catch (e) {
+    const payload = e.data || { error: e.message };
+    showEmailStatus("error", "Failed to send finance report ❌", payload);
+
+    const msg = payload?.error || e.message || "";
+    if (isNetworkMailError(msg)) {
+      const ok = confirm("SMTP email failed due to network route (ENETUNREACH). Use Email (Easy) instead?");
+      if (ok) return emailFinanceEasy();
+    }
   }
 }
 
-// ✅ NEW: EASY mail fallback (downloads CSV + opens email app)
+// Easy finance email (download CSV + mailto)
 async function emailFinanceEasy() {
   if (!lastReportType) {
     showEmailStatus("error", "Please generate a report first.", { error: "No report type selected." });
@@ -744,9 +754,9 @@ Regards.`;
   showEmailStatus("success", "Email app opened ✅ (Attach the downloaded CSV)", { ok: true });
 }
 
-// ======================
-// Inventory CRUD + Spoilage/Mishandling
-// ======================
+/***********************
+ * INVENTORY
+ ***********************/
 async function addProduct() {
   const name = getVal("pName").trim();
   const sku = getVal("pSku").trim();
@@ -880,7 +890,7 @@ async function stockMove(productId, type) {
   }
 }
 
-// ✅ NEW: Spoilage/Mishandling = stock out + reason
+// Spoilage/Mishandling
 async function recordLoss(productId, reason) {
   const p = products.find(x => String(x.id) === String(productId));
   if (!p) return alert("Product not found.");
@@ -894,7 +904,6 @@ async function recordLoss(productId, reason) {
 
   if (Number(p.qty) - qty < 0) return alert("Insufficient stock.");
 
-  // optimistic local update
   p.qty = Number(p.qty) - qty;
   p.updated_at = new Date().toISOString();
   await idbPut("products", p);
@@ -929,9 +938,9 @@ function renderProductsTable() {
   products.forEach(p => {
     tbody.innerHTML += `
       <tr>
-        <td>${p.name}</td>
-        <td>${p.sku || ""}</td>
-        <td>${p.unit || "pcs"}</td>
+        <td>${escapeHtml(p.name)}</td>
+        <td>${escapeHtml(p.sku || "")}</td>
+        <td>${escapeHtml(p.unit || "pcs")}</td>
         <td>${p.qty}</td>
         <td>${p.reorder_level || 0}</td>
         <td>
@@ -954,6 +963,7 @@ function downloadInventoryCSV() {
   window.open(`${API_BASE}/api/inventory/export/inventory.csv`, "_blank");
 }
 
+// SMTP inventory email + JSON + fallback
 async function emailInventoryCSV() {
   if (!navigator.onLine) return alert("You must be online to email inventory CSV.");
 
@@ -972,12 +982,20 @@ async function emailInventoryCSV() {
     if (status) status.textContent = `✅ Sent! ${JSON.stringify(resp)}`;
     setVal("invEmail", "");
   } catch (e) {
-    if (status) status.textContent = `❌ Failed: ${e.data ? JSON.stringify(e.data) : e.message}`;
-    alert(`❌ Inventory email failed: ${e.message}`);
+    const payload = e.data || { error: e.message };
+    if (status) status.textContent = `❌ Failed: ${JSON.stringify(payload)}`;
+
+    const msg = payload?.error || e.message || "";
+    if (isNetworkMailError(msg)) {
+      const ok = confirm("SMTP email failed due to network route (ENETUNREACH). Use Email (Easy) instead?");
+      if (ok) return emailInventoryEasy();
+    }
+
+    alert(`❌ Inventory email failed: ${msg}`);
   }
 }
 
-// ✅ NEW: EASY mail fallback
+// Easy inventory email (download CSV + mailto)
 async function emailInventoryEasy() {
   const to = getVal("invEmail").trim();
   if (!to) return alert("Enter recipient email.");
@@ -1004,9 +1022,9 @@ Regards.`;
   if (status) status.textContent = "✅ Email app opened (attach the downloaded CSV).";
 }
 
-// ======================
-// Queue Sync
-// ======================
+/***********************
+ * QUEUE SYNC
+ ***********************/
 async function flushQueue() {
   if (!navigator.onLine) return;
 
@@ -1034,9 +1052,9 @@ $("syncBtn")?.addEventListener("click", async () => {
 window.addEventListener("online", async () => { setNetUI(); await flushQueue(); });
 window.addEventListener("offline", () => setNetUI());
 
-// ======================
-// PWA Install
-// ======================
+/***********************
+ * PWA INSTALL
+ ***********************/
 window.addEventListener("beforeinstallprompt", (e) => {
   e.preventDefault();
   deferredPrompt = e;
@@ -1050,6 +1068,8 @@ $("installBtn")?.addEventListener("click", () => {
   deferredPrompt = null;
 });
 
-// Initial
+/***********************
+ * INIT
+ ***********************/
 setNetUI();
 loadAll();
