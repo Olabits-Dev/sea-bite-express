@@ -3,21 +3,31 @@
   --card: #fff;
   --text: #111;
   --muted: #6b7280;
+
   --primary: #007bff;
   --primaryHover: #0056b3;
+
   --danger: #dc2626;
   --dangerHover: #b91c1c;
+
   --warning: #f59e0b;
   --warningHover: #d97706;
+
   --purple: #7c3aed;
   --purpleHover: #6d28d9;
-  --border: #e5e7eb;
-  --shadow: 0 0 10px rgba(0,0,0,0.08);
-  --radius: 12px;
 
-  /* ✅ extras for better polish */
-  --shadow2: 0 10px 25px rgba(0,0,0,0.10);
+  --border: #e5e7eb;
+
+  --shadow: 0 0 10px rgba(0,0,0,0.08);
+  --shadow2: 0 14px 40px rgba(0,0,0,0.10);
+
+  --radius: 12px;
   --focusRing: 0 0 0 3px rgba(0, 123, 255, 0.25);
+
+  /* table colors */
+  --thead: #0b5ed7;
+  --rowAlt: #f8fafc;
+  --rowHover: rgba(0, 123, 255, 0.06);
 }
 
 * { box-sizing: border-box; }
@@ -40,7 +50,6 @@ h1 {
 }
 
 h2 { margin: 18px 0 10px; }
-
 h3 { margin: 0; }
 
 .muted { color: var(--muted); margin: 0; }
@@ -85,7 +94,7 @@ h3 { margin: 0; }
   margin: 0;
   border-radius: var(--radius);
   box-shadow: var(--shadow);
-  border: 1px solid rgba(0,0,0,0.02);
+  border: 1px solid rgba(0,0,0,0.03);
 }
 
 /* Inputs */
@@ -126,14 +135,9 @@ button:focus-visible {
   box-shadow: var(--focusRing);
 }
 
-.secondary-btn {
-  background: #111827;
-}
-.secondary-btn:hover {
-  background: #0b1220;
-}
+.secondary-btn { background: #111827; }
+.secondary-btn:hover { background: #0b1220; }
 
-/* Report action row */
 .report-actions {
   display: flex;
   flex-wrap: wrap;
@@ -141,101 +145,122 @@ button:focus-visible {
   align-items: center;
 }
 
-/* Email row (legacy support) */
-.email-row {
-  margin-top: 10px;
+/* Section title */
+.section-title {
   display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-  align-items: center;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 18px;
 }
 
-.email-row input {
-  flex: 1;
-  min-width: 220px;
-  margin: 0;
-}
-.email-row button { margin: 0; }
-
-/* status box json view */
-.status-box {
-  margin-top: 10px;
-  padding: 12px;
-  border-radius: 12px;
-  border: 1px solid var(--border);
-  background: #f9fafb;
-  box-shadow: var(--shadow);
-}
-.status-box pre {
-  margin: 10px 0 0;
-  padding: 10px;
-  border-radius: 10px;
-  background: #0b1020;
-  color: #e5e7eb;
-  overflow: auto;
-  font-size: 0.85rem;
-}
-.status-box.sending { border-color: #60a5fa; }
-.status-box.success { border-color: #34d399; }
-.status-box.error { border-color: #f87171; }
-
-/* Tables */
+/* ✅ Professional Table Container */
 .table-wrap {
   width: 100%;
   overflow-x: auto;
   border-radius: var(--radius);
-  box-shadow: var(--shadow2);
   background: var(--card);
-  margin-top: 10px;
-  border: 1px solid rgba(0,0,0,0.04);
+  box-shadow: var(--shadow2);
+  border: 1px solid rgba(0,0,0,0.06);
 }
 
+/* ✅ Professional Data Table */
 .records-table {
   width: 100%;
-  border-collapse: collapse;
-  min-width: 900px;
+  border-collapse: separate;
+  border-spacing: 0;
+  min-width: 980px;
+  table-layout: fixed; /* ✅ important: keeps columns aligned */
 }
 
-.records-table th,
-.records-table td {
-  padding: 10px;
-  border-bottom: 1px solid var(--border);
-  text-align: left;
-  vertical-align: top;
-  white-space: normal;
-  word-break: break-word;
-}
-
+/* header */
 .records-table thead th {
-  background: var(--primary);
+  background: var(--thead);
   color: #fff;
   position: sticky;
   top: 0;
-  z-index: 1;
+  z-index: 2;
+  font-size: 0.92rem;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  padding: 12px 12px;
+  border-bottom: 1px solid rgba(255,255,255,0.15);
 }
 
+/* rounded header corners */
+.records-table thead th:first-child { border-top-left-radius: var(--radius); }
+.records-table thead th:last-child { border-top-right-radius: var(--radius); }
+
+.records-table th,
+.records-table td {
+  padding: 12px 12px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  vertical-align: middle; /* ✅ makes it look neat */
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* zebra rows */
+.records-table tbody tr:nth-child(even) td {
+  background: var(--rowAlt);
+}
+
+/* hover highlight */
 .records-table tbody tr:hover td {
-  background: rgba(0, 123, 255, 0.04);
+  background: var(--rowHover);
 }
 
+/* ✅ Column sizing for All Records (6 columns) */
+.records-table thead th:nth-child(1),
+.records-table tbody td:nth-child(1) { width: 100px; } /* Type */
+
+.records-table thead th:nth-child(2),
+.records-table tbody td:nth-child(2) { width: 140px; } /* Amount */
+
+.records-table thead th:nth-child(3),
+.records-table tbody td:nth-child(3) { width: 260px; } /* Description */
+
+.records-table thead th:nth-child(4),
+.records-table tbody td:nth-child(4) { width: 260px; } /* Products Used */
+
+.records-table thead th:nth-child(5),
+.records-table tbody td:nth-child(5) { width: 170px; } /* Date */
+
+.records-table thead th:nth-child(6),
+.records-table tbody td:nth-child(6) { width: 190px; } /* Action */
+
+/* ✅ Allow wrapping only where needed */
+.records-table td:nth-child(3),
+.records-table td:nth-child(4) {
+  white-space: normal;
+  line-height: 1.35;
+}
+
+/* action column */
 .action-col { text-align: center; }
 
-/* ✅ Ensures action buttons never overflow columns */
+/* ✅ Professional compact action buttons */
 .action-buttons,
 .inv-actions {
-  display: flex;
+  display: inline-flex;
   gap: 8px;
   justify-content: center;
-  flex-wrap: wrap;
+  align-items: center;
+  flex-wrap: nowrap; /* ✅ prevents random wrapping */
   width: 100%;
 }
 
 .action-buttons button,
 .inv-actions button {
   margin: 0;
+  padding: 8px 10px;
+  border-radius: 10px;
+  font-size: 0.85rem;
+  font-weight: 800;
+  min-width: 84px;
+  box-shadow: none;
   white-space: nowrap;
-  flex: 0 0 auto;
-  min-width: 92px;
 }
 
 /* Button variants */
@@ -254,6 +279,16 @@ button:focus-visible {
 .warn-btn { background: var(--purple); }
 .warn-btn:hover { background: var(--purpleHover); }
 
+/* ✅ Inventory action buttons look neat even if many */
+.inv-actions {
+  flex-wrap: wrap; /* inventory can wrap but still looks systematic */
+  justify-content: center;
+}
+
+.inv-actions button {
+  min-width: 96px;
+}
+
 /* Usage summary */
 .usage-summary {
   font-size: 0.92rem;
@@ -263,15 +298,6 @@ button:focus-visible {
   border: 1px dashed var(--border);
   border-radius: 12px;
   background: #fafafa;
-}
-
-/* Section title */
-.section-title {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
-  margin-top: 18px;
 }
 
 /* Mini chart */
@@ -290,13 +316,10 @@ button:focus-visible {
   gap: 8px;
   margin-bottom: 10px;
   color: #111827;
-  font-weight: 700;
+  font-weight: 800;
 }
 
-.mini-bars {
-  display: grid;
-  gap: 10px;
-}
+.mini-bars { display: grid; gap: 10px; }
 
 .mini-bar-row {
   display: grid;
@@ -305,7 +328,7 @@ button:focus-visible {
   align-items: center;
 }
 
-.mini-bar-label { color: #111827; font-weight: 700; }
+.mini-bar-label { color: #111827; font-weight: 800; }
 
 .mini-bar-track {
   height: 12px;
@@ -324,7 +347,7 @@ button:focus-visible {
 .mini-bar-fill.sales { background: #16a34a; }
 .mini-bar-fill.expenses { background: #dc2626; }
 
-.mini-bar-value { text-align: right; color: #111827; font-weight: 700; }
+.mini-bar-value { text-align: right; color: #111827; font-weight: 800; }
 
 /* Modal */
 .modal {
@@ -367,9 +390,7 @@ button:focus-visible {
   box-shadow: none;
 }
 
-.modal-close:hover {
-  background: rgba(255,255,255,0.10);
-}
+.modal-close:hover { background: rgba(255,255,255,0.10); }
 
 .modal-hint {
   padding: 12px 16px 0;
@@ -396,9 +417,8 @@ button:focus-visible {
   background: #fff;
 }
 
-.u-name { font-weight: 800; }
+.u-name { font-weight: 900; }
 .u-meta { color: var(--muted); font-size: 0.9rem; }
-
 .usage-row input { margin: 0; }
 
 .modal-actions {
@@ -421,43 +441,20 @@ button:focus-visible {
   border: 1px solid var(--border);
 }
 
-/* ✅ Better touch targets on mobile */
+/* Better touch targets on mobile */
 @media (pointer: coarse) {
   button { padding: 12px 14px; }
   input { padding: 12px; }
 }
 
-/* MOBILE */
+/* Responsive */
 @media (max-width: 900px) {
   body { padding: 14px; }
   .grid { grid-template-columns: 1fr; }
-
-  .records-table { min-width: 720px; }
-
-  .mini-bar-row {
-    grid-template-columns: 70px 1fr 120px;
-  }
+  .records-table { min-width: 900px; } /* keep grid look with scroll */
 }
 
 @media (max-width: 520px) {
-  .records-table { min-width: 650px; }
-
-  /* Full-width buttons inside forms for easy tapping */
-  .form-section button {
-    width: 100%;
-  }
-
-  /* Keep report buttons compact */
-  .report-actions button {
-    width: auto;
-  }
-
-  .action-buttons button,
-  .inv-actions button {
-    min-width: 120px;
-  }
-
-  .usage-row {
-    grid-template-columns: 1fr;
-  }
+  .form-section button { width: 100%; }
+  .report-actions button { width: auto; }
 }
