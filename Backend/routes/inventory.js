@@ -5,18 +5,15 @@ const router = express.Router();
 const { all, get, query, pool } = require("../db");
 const { sendMailWithAttachment } = require("../utils/mailer");
 
-function cleanStr(v, fallback = "") {
-  return String(v ?? fallback).trim();
-}
-function toNumber(v, fallback = 0) {
-  const n = Number(v);
-  return Number.isFinite(n) ? n : fallback;
-}
+function cleanStr(v, fallback = "") { return String(v ?? fallback).trim(); }
+function toNumber(v, fallback = 0) { const n = Number(v); return Number.isFinite(n) ? n : fallback; }
+
 function csvEscape(value) {
   const s = String(value ?? "");
   if (/[",\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
   return s;
 }
+
 function buildInventoryCsv(rows) {
   let csv = "";
   csv += "INVENTORY REPORT\n";
@@ -51,7 +48,7 @@ router.get("/products", async (req, res) => {
   }
 });
 
-// CREATE product + initial_qty auto Stock IN movement
+// CREATE product + initial_qty auto stock-in
 router.post("/products", async (req, res) => {
   const name = cleanStr(req.body?.name);
   const sku = cleanStr(req.body?.sku);
@@ -79,9 +76,9 @@ router.post("/products", async (req, res) => {
 
     if (initial_qty > 0) {
       await client.query(
-        `INSERT INTO stock_movements (product_id, type, qty, note, created_at)
-         VALUES ($1,'IN',$2,$3, NOW())`,
-        [product.id, initial_qty, "Initial Stock IN on product creation"]
+        `INSERT INTO stock_movements (product_id, type, qty, reason, note, created_at)
+         VALUES ($1,'IN',$2,$3,$4, NOW())`,
+        [product.id, initial_qty, "INITIAL", "Initial Stock IN on product creation"]
       );
     }
 
@@ -95,7 +92,7 @@ router.post("/products", async (req, res) => {
   }
 });
 
-// UPDATE product (metadata only)
+// UPDATE product metadata
 router.put("/products/:id", async (req, res) => {
   try {
     const id = toNumber(req.params.id);
@@ -135,12 +132,13 @@ router.delete("/products/:id", async (req, res) => {
   }
 });
 
-// Stock move IN/OUT
+// Stock move IN/OUT (manual)
 router.post("/products/:id/move", async (req, res) => {
   const id = toNumber(req.params.id);
-  const type = cleanStr(req.body?.type).toUpperCase(); // IN | OUT
+  const type = cleanStr(req.body?.type).toUpperCase();
   const qty = toNumber(req.body?.qty, 0);
   const note = cleanStr(req.body?.note);
+  const reason = cleanStr(req.body?.reason || (type === "IN" ? "MANUAL_IN" : "MANUAL_OUT"));
 
   if (!["IN", "OUT"].includes(type)) return res.status(400).json({ error: "type must be IN or OUT" });
   if (qty <= 0) return res.status(400).json({ error: "qty must be greater than 0" });
@@ -164,9 +162,9 @@ router.post("/products/:id/move", async (req, res) => {
     }
 
     await client.query(
-      `INSERT INTO stock_movements (product_id, type, qty, note, created_at)
-       VALUES ($1,$2,$3,$4, NOW())`,
-      [id, type, qty, note]
+      `INSERT INTO stock_movements (product_id, type, qty, reason, note, created_at)
+       VALUES ($1,$2,$3,$4,$5, NOW())`,
+      [id, type, qty, reason, note]
     );
 
     const updated = await client.query(
@@ -181,6 +179,58 @@ router.post("/products/:id/move", async (req, res) => {
   } catch (e) {
     await client.query("ROLLBACK");
     res.status(500).json({ error: e.message || "Failed to move stock" });
+  } finally {
+    client.release();
+  }
+});
+
+// ✅ NEW: record inventory loss (spoilage/mishandling) = stock OUT with reason
+router.post("/products/:id/loss", async (req, res) => {
+  const id = toNumber(req.params.id);
+  const qty = toNumber(req.body?.qty, 0);
+  const reason = cleanStr(req.body?.reason).toUpperCase(); // SPOILAGE | MISHANDLING
+  const note = cleanStr(req.body?.note);
+
+  if (!["SPOILAGE", "MISHANDLING"].includes(reason)) {
+    return res.status(400).json({ error: "reason must be SPOILAGE or MISHANDLING" });
+  }
+  if (qty <= 0) return res.status(400).json({ error: "qty must be greater than 0" });
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+
+    const p = await client.query(`SELECT id, qty FROM products WHERE id=$1 FOR UPDATE`, [id]);
+    if (!p.rows[0]) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "Product not found" });
+    }
+
+    const currentQty = Number(p.rows[0].qty) || 0;
+    const newQty = currentQty - qty;
+    if (newQty < 0) {
+      await client.query("ROLLBACK");
+      return res.status(400).json({ error: "Insufficient stock" });
+    }
+
+    await client.query(
+      `INSERT INTO stock_movements (product_id, type, qty, reason, note, created_at)
+       VALUES ($1,'OUT',$2,$3,$4, NOW())`,
+      [id, qty, reason, note]
+    );
+
+    const updated = await client.query(
+      `UPDATE products SET qty=$1, updated_at=NOW()
+       WHERE id=$2
+       RETURNING id, name, sku, unit, qty, reorder_level, updated_at`,
+      [newQty, id]
+    );
+
+    await client.query("COMMIT");
+    res.json({ ok: true, updated: updated.rows[0] });
+  } catch (e) {
+    await client.query("ROLLBACK");
+    res.status(500).json({ error: e.message || "Failed to record loss" });
   } finally {
     client.release();
   }
@@ -204,7 +254,7 @@ router.get("/export/inventory.csv", async (req, res) => {
   }
 });
 
-// Email inventory CSV
+// Email inventory CSV (SMTP)
 router.post("/email/inventory", async (req, res) => {
   try {
     const to = cleanStr(req.body?.to);

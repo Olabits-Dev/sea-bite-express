@@ -4,13 +4,8 @@ const router = express.Router();
 const { pool, all, get, query } = require("../db");
 const { sendMailWithAttachment } = require("../utils/mailer");
 
-function cleanStr(v, fallback = "") {
-  return String(v ?? fallback).trim();
-}
-function toNumber(v, fallback = 0) {
-  const n = Number(v);
-  return Number.isFinite(n) ? n : fallback;
-}
+function cleanStr(v, fallback = "") { return String(v ?? fallback).trim(); }
+function toNumber(v, fallback = 0) { const n = Number(v); return Number.isFinite(n) ? n : fallback; }
 function csvEscape(value) {
   const s = String(value ?? "");
   if (/[",\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
@@ -18,18 +13,12 @@ function csvEscape(value) {
 }
 
 function periodWhere(period) {
-  // created_at is timestamp
   switch (period) {
-    case "daily":
-      return `created_at >= NOW() - INTERVAL '1 day'`;
-    case "weekly":
-      return `created_at >= NOW() - INTERVAL '7 days'`;
-    case "monthly":
-      return `date_trunc('month', created_at) = date_trunc('month', NOW())`;
-    case "yearly":
-      return `date_trunc('year', created_at) = date_trunc('year', NOW())`;
-    default:
-      return null;
+    case "daily": return `created_at >= NOW() - INTERVAL '1 day'`;
+    case "weekly": return `created_at >= NOW() - INTERVAL '7 days'`;
+    case "monthly": return `date_trunc('month', created_at) = date_trunc('month', NOW())`;
+    case "yearly": return `date_trunc('year', created_at) = date_trunc('year', NOW())`;
+    default: return null;
   }
 }
 
@@ -111,11 +100,11 @@ router.post("/sales", async (req, res) => {
 
       const newQty = currentQty - qtyUsed;
 
-      // record movement + update qty
+      // ✅ record movement + update qty (reason = SALE)
       await client.query(
-        `INSERT INTO stock_movements (product_id, type, qty, note, created_at)
-         VALUES ($1,'OUT',$2,$3, NOW())`,
-        [pid, qtyUsed, `Auto stock-out from sale: ${description}`]
+        `INSERT INTO stock_movements (product_id, type, qty, reason, note, created_at)
+         VALUES ($1,'OUT',$2,$3,$4, NOW())`,
+        [pid, qtyUsed, "SALE", `Auto stock-out from sale: ${description}`]
       );
 
       await client.query(`UPDATE products SET qty=$1, updated_at=NOW() WHERE id=$2`, [newQty, pid]);
@@ -144,7 +133,6 @@ router.post("/sales", async (req, res) => {
 
     await client.query("COMMIT");
 
-    // return with items
     const full = await fetchSalesWithItems(`id = ${sale.id}`);
     res.json(full[0]);
   } catch (e) {
@@ -181,7 +169,7 @@ router.put("/sales/:id", async (req, res) => {
   }
 });
 
-// Delete sale: restore stock back (reverse OUT movements using sale_items)
+// Delete sale: restore stock back
 router.delete("/sales/:id", async (req, res) => {
   const id = toNumber(req.params.id);
   const client = await pool.connect();
@@ -194,6 +182,7 @@ router.delete("/sales/:id", async (req, res) => {
       await client.query("ROLLBACK");
       return res.status(404).json({ error: "Sale not found" });
     }
+    const saleDesc = sale.rows[0].description;
 
     const items = await client.query(
       `SELECT product_id, qty_used FROM sale_items WHERE sale_id=$1`,
@@ -210,17 +199,17 @@ router.delete("/sales/:id", async (req, res) => {
         const currentQty = Number(p.rows[0].qty) || 0;
         const newQty = currentQty + qtyUsed;
 
+        // ✅ reason = SALE_RESTORE
         await client.query(
-          `INSERT INTO stock_movements (product_id, type, qty, note, created_at)
-           VALUES ($1,'IN',$2,$3, NOW())`,
-          [pid, qtyUsed, `Restore stock from deleted sale: ${sale.rows[0].description}`]
+          `INSERT INTO stock_movements (product_id, type, qty, reason, note, created_at)
+           VALUES ($1,'IN',$2,$3,$4, NOW())`,
+          [pid, qtyUsed, "SALE_RESTORE", `Restore stock from deleted sale: ${saleDesc}`]
         );
 
         await client.query(`UPDATE products SET qty=$1, updated_at=NOW() WHERE id=$2`, [newQty, pid]);
       }
     }
 
-    // delete sale (cascades sale_items)
     await client.query(`DELETE FROM sales WHERE id=$1`, [id]);
 
     await client.query("COMMIT");
@@ -331,7 +320,7 @@ router.get("/report", async (req, res) => {
   }
 });
 
-// Export finance CSV (summary + detailed)
+// Export finance CSV
 router.get("/export/finance.csv", async (req, res) => {
   try {
     const period = cleanStr(req.query?.period).toLowerCase();
@@ -380,7 +369,7 @@ router.get("/export/finance.csv", async (req, res) => {
   }
 });
 
-// Email finance CSV
+// Email finance CSV (SMTP)
 router.post("/email/finance", async (req, res) => {
   try {
     const to = cleanStr(req.body?.to);
@@ -390,7 +379,6 @@ router.post("/email/finance", async (req, res) => {
     if (!to) return res.status(400).json({ error: "Recipient email is required" });
     if (!where) return res.status(400).json({ error: "Invalid period" });
 
-    // reuse export logic to build CSV
     const sales = await fetchSalesWithItems(where);
     const expenses = await all(
       `SELECT id, amount, description, created_at FROM expenses

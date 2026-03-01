@@ -25,7 +25,7 @@ app.use(
     origin: (origin, cb) => {
       if (!origin) return cb(null, true);
       if (allowedOrigins.has(origin)) return cb(null, true);
-      if (/^https:\/\/.*\.netlify\.app$/.test(origin)) return cb(null, true); // preview deploys
+      if (/^https:\/\/.*\.netlify\.app$/.test(origin)) return cb(null, true);
       return cb(null, false);
     },
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
@@ -74,15 +74,30 @@ async function runMigrations() {
       );
     `);
 
+    // ✅ include reason column here for new DBs
     await pool.query(`
       CREATE TABLE IF NOT EXISTS stock_movements (
         id SERIAL PRIMARY KEY,
         product_id INT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
         type TEXT NOT NULL CHECK (type IN ('IN','OUT')),
         qty NUMERIC NOT NULL,
+        reason TEXT DEFAULT '',
         note TEXT DEFAULT '',
         created_at TIMESTAMP DEFAULT NOW()
       );
+    `);
+
+    // ✅ for older DBs that already created stock_movements without reason
+    await pool.query(`
+      DO $$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_name='stock_movements' AND column_name='reason'
+        ) THEN
+          ALTER TABLE stock_movements ADD COLUMN reason TEXT DEFAULT '';
+        END IF;
+      END $$;
     `);
 
     await pool.query(`

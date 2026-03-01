@@ -58,9 +58,9 @@
     <div class="email-row">
       <input type="email" id="financeEmail" placeholder="Send finance CSV to email (e.g. client@gmail.com)" />
       <button type="button" onclick="emailFinanceCSV()">Send</button>
+      <button type="button" onclick="emailFinanceEasy()">Email (Easy)</button>
     </div>
 
-    <!-- ✅ NEW: Finance email status box (shows sending/success/error JSON like inventory) -->
     <div id="emailStatus" class="status-box" style="display:none;"></div>
 
     <div id="reportResult"></div>
@@ -136,6 +136,7 @@
       <div class="report-actions">
         <button type="button" onclick="downloadInventoryCSV()">Download Inventory CSV</button>
         <button type="button" onclick="emailInventoryCSV()">Email Inventory CSV</button>
+        <button type="button" onclick="emailInventoryEasy()">Email (Easy)</button>
       </div>
 
       <div id="invStatus" class="status"></div>
@@ -150,7 +151,7 @@
         <col style="width: 110px" />
         <col style="width: 100px" />
         <col style="width: 110px" />
-        <col style="width: 300px" />
+        <col style="width: 380px" />
       </colgroup>
       <thead>
         <tr>

@@ -19,7 +19,6 @@ function escapeHtml(str) {
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#039;");
 }
-
 function showEmailStatus(state, title, obj) {
   const box = document.getElementById("emailStatus");
   if (!box) return;
@@ -29,6 +28,14 @@ function showEmailStatus(state, title, obj) {
 
   const json = obj ? `<pre>${escapeHtml(JSON.stringify(obj, null, 2))}</pre>` : "";
   box.innerHTML = `<strong>${title}</strong>${json}`;
+}
+
+// ======================
+// Easy Mailto Fallback (works even if SMTP fails)
+// ======================
+function openMailto(to, subject, body) {
+  const url = `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+  window.location.href = url;
 }
 
 // ======================
@@ -63,7 +70,6 @@ async function idbPut(store, value) {
     tx.onerror = () => reject(tx.error);
   });
 }
-
 async function idbPutMany(store, values) {
   const db = await openDB();
   return new Promise((resolve, reject) => {
@@ -74,7 +80,6 @@ async function idbPutMany(store, values) {
     tx.onerror = () => reject(tx.error);
   });
 }
-
 async function idbGetAll(store) {
   const db = await openDB();
   return new Promise((resolve, reject) => {
@@ -84,7 +89,6 @@ async function idbGetAll(store) {
     req.onerror = () => reject(req.error);
   });
 }
-
 async function idbDelete(store, key) {
   const db = await openDB();
   return new Promise((resolve, reject) => {
@@ -104,7 +108,6 @@ async function queueAdd(action) {
     tx.onerror = () => reject(tx.error);
   });
 }
-
 async function queueAll() { return idbGetAll("queue"); }
 async function queueClearItem(qid) { return idbDelete("queue", qid); }
 
@@ -116,7 +119,6 @@ async function api(path, options = {}) {
 
   const headers = { ...(options.headers || {}) };
   const hasBody = options.body !== undefined && options.body !== null;
-
   if (hasBody && !headers["Content-Type"]) headers["Content-Type"] = "application/json";
 
   let res;
@@ -676,7 +678,6 @@ function exportCSV() {
   window.open(`${API_BASE}/api/finance/export/finance.csv?period=${encodeURIComponent(lastReportType)}`, "_blank");
 }
 
-// ✅ UPDATED: Finance email sends status JSON like inventory
 async function emailFinanceCSV() {
   if (!lastReportType) {
     showEmailStatus("error", "Please generate a report first.", { error: "No report type selected." });
@@ -708,8 +709,43 @@ async function emailFinanceCSV() {
   }
 }
 
+// ✅ NEW: EASY mail fallback (downloads CSV + opens email app)
+async function emailFinanceEasy() {
+  if (!lastReportType) {
+    showEmailStatus("error", "Please generate a report first.", { error: "No report type selected." });
+    return;
+  }
+
+  const to = getVal("financeEmail").trim();
+  if (!to) {
+    showEmailStatus("error", "Recipient email is required.", { error: "Enter a valid email." });
+    return;
+  }
+
+  showEmailStatus("sending", "Opening your email app...", { to, period: lastReportType });
+
+  if (navigator.onLine) {
+    window.open(`${API_BASE}/api/finance/export/finance.csv?period=${encodeURIComponent(lastReportType)}`, "_blank");
+  }
+
+  const body =
+`Hello,
+
+Please find the Finance Report (${lastReportType.toUpperCase()}).
+
+✅ I have downloaded the CSV report for you. Please attach the downloaded file to this email.
+
+Report Type: ${lastReportType.toUpperCase()}
+Generated: ${new Date().toLocaleString()}
+
+Regards.`;
+
+  openMailto(to, `Finance Report (${lastReportType.toUpperCase()}) - SeaBite Tracker`, body);
+  showEmailStatus("success", "Email app opened ✅ (Attach the downloaded CSV)", { ok: true });
+}
+
 // ======================
-// Inventory CRUD
+// Inventory CRUD + Spoilage/Mishandling
 // ======================
 async function addProduct() {
   const name = getVal("pName").trim();
@@ -823,13 +859,9 @@ async function stockMove(productId, type) {
 
   const note = prompt("Note (optional):", "") ?? "";
 
-  if (type === "OUT" && Number(p.qty) - qty < 0) {
-    return alert("Insufficient stock.");
-  }
+  if (type === "OUT" && Number(p.qty) - qty < 0) return alert("Insufficient stock.");
 
-  if (type === "IN") p.qty = Number(p.qty) + qty;
-  else p.qty = Number(p.qty) - qty;
-
+  p.qty = type === "IN" ? Number(p.qty) + qty : Number(p.qty) - qty;
   p.updated_at = new Date().toISOString();
   await idbPut("products", p);
 
@@ -844,6 +876,40 @@ async function stockMove(productId, type) {
 
   if (navigator.onLine && !result.ok) {
     alert(`Stock move failed: ${result.error}`);
+    await loadAll();
+  }
+}
+
+// ✅ NEW: Spoilage/Mishandling = stock out + reason
+async function recordLoss(productId, reason) {
+  const p = products.find(x => String(x.id) === String(productId));
+  if (!p) return alert("Product not found.");
+
+  const qtyRaw = prompt(`Enter quantity for ${reason}:`, "1");
+  if (qtyRaw === null) return;
+  const qty = Number(qtyRaw);
+  if (!isValidQty(qty)) return alert("Quantity must be > 0");
+
+  const note = prompt("Note (optional):", "") ?? "";
+
+  if (Number(p.qty) - qty < 0) return alert("Insufficient stock.");
+
+  // optimistic local update
+  p.qty = Number(p.qty) - qty;
+  p.updated_at = new Date().toISOString();
+  await idbPut("products", p);
+
+  renderProductsTable();
+  renderUsageSummary();
+
+  const result = await apiOrQueue({
+    kind: "stock_loss",
+    path: `/api/inventory/products/${productId}/loss`,
+    options: { method: "POST", body: JSON.stringify({ qty, reason, note }) }
+  });
+
+  if (navigator.onLine && !result.ok) {
+    alert(`Loss record failed: ${result.error}`);
     await loadAll();
   }
 }
@@ -872,6 +938,8 @@ function renderProductsTable() {
           <div class="inv-actions">
             <button class="in-btn" type="button" onclick="stockMove('${p.id}', 'IN')">Stock IN</button>
             <button class="out-btn" type="button" onclick="stockMove('${p.id}', 'OUT')">Stock OUT</button>
+            <button class="warn-btn" type="button" onclick="recordLoss('${p.id}', 'SPOILAGE')">Spoilage</button>
+            <button class="warn-btn" type="button" onclick="recordLoss('${p.id}', 'MISHANDLING')">Mishandling</button>
             <button class="edit-btn" type="button" onclick="editProduct('${p.id}')">Edit</button>
             <button class="delete-btn" type="button" onclick="deleteProduct('${p.id}')">Delete</button>
           </div>
@@ -907,6 +975,33 @@ async function emailInventoryCSV() {
     if (status) status.textContent = `❌ Failed: ${e.data ? JSON.stringify(e.data) : e.message}`;
     alert(`❌ Inventory email failed: ${e.message}`);
   }
+}
+
+// ✅ NEW: EASY mail fallback
+async function emailInventoryEasy() {
+  const to = getVal("invEmail").trim();
+  if (!to) return alert("Enter recipient email.");
+
+  const status = $("invStatus");
+  if (status) status.textContent = "Opening email app...";
+
+  if (navigator.onLine) {
+    window.open(`${API_BASE}/api/inventory/export/inventory.csv`, "_blank");
+  }
+
+  const body =
+`Hello,
+
+Please find the Inventory Report.
+
+✅ I have downloaded the CSV report for you. Please attach the downloaded file to this email.
+
+Generated: ${new Date().toLocaleString()}
+
+Regards.`;
+
+  openMailto(to, "Inventory Report - SeaBite Tracker", body);
+  if (status) status.textContent = "✅ Email app opened (attach the downloaded CSV).";
 }
 
 // ======================
