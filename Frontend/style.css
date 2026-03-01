@@ -125,7 +125,7 @@ button:hover{ background:var(--primaryHover); }
   overflow-wrap: anywhere;
 }
 
-/* NEW: Date/Time column wrap */
+/* Date/Time column wrap */
 .finance-table td:nth-child(5){
   white-space: normal;
   overflow-wrap: anywhere;
@@ -258,6 +258,22 @@ button:hover{ background:var(--primaryHover); }
 
 .secondary-btn{ background:#6b7280; }
 .secondary-btn:hover{ background:#4b5563; }
+
+/* ✅ NEW: Finance email status box (same idea as inventory) */
+.status-box{
+  margin-top: 10px;
+  padding: 12px;
+  border-radius: 10px;
+  background: #fff;
+  border: 1px solid #ddd;
+  font-size: 14px;
+  line-height: 1.4;
+  word-break: break-word;
+}
+.status-box.success{ border-color:#2ecc71; background:#eafaf1; }
+.status-box.error{ border-color:#e74c3c; background:#fdecea; }
+.status-box.sending{ border-color:#3498db; background:#eaf3ff; }
+.status-box pre{ margin:8px 0 0; white-space:pre-wrap; }
 
 /* Mobile */
 @media (max-width: 420px){

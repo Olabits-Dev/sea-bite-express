@@ -1,23 +1,35 @@
-// ======================
-// API Base Fix
-// ======================
+const PROD_API_BASE = "https://sea-bite-express.onrender.com"; // <-- set once
 
-// 1) Put your Render backend here once:
-const PROD_API_BASE = "https://sea-bite-express.onrender.com"; // 
-
-// 2) Auto detect local vs production
 const API_BASE = (() => {
   const host = window.location.hostname;
-  const isLocal =
-    host === "localhost" ||
-    host === "127.0.0.1" ||
-    host.endsWith(".local");
-
+  const isLocal = host === "localhost" || host === "127.0.0.1" || host.endsWith(".local");
   return isLocal ? "http://localhost:5000" : PROD_API_BASE;
 })();
 
-// Optional: quick visibility in console
 console.log("API_BASE:", API_BASE);
+
+// ======================
+// Email Status Helpers (Finance)
+// ======================
+function escapeHtml(str) {
+  return String(str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+function showEmailStatus(state, title, obj) {
+  const box = document.getElementById("emailStatus");
+  if (!box) return;
+
+  box.style.display = "block";
+  box.className = `status-box ${state}`;
+
+  const json = obj ? `<pre>${escapeHtml(JSON.stringify(obj, null, 2))}</pre>` : "";
+  box.innerHTML = `<strong>${title}</strong>${json}`;
+}
 
 // ======================
 // IndexedDB (Offline Queue + Cached Data)
@@ -97,62 +109,34 @@ async function queueAll() { return idbGetAll("queue"); }
 async function queueClearItem(qid) { return idbDelete("queue", qid); }
 
 // ======================
-// State
-// ======================
-let deferredPrompt;
-let lastReportType = null;
-
-let sales = [];
-let expenses = [];
-let products = [];
-
-let pendingUsage = []; // [{product_id, qty_used}]
-
-// ======================
-// Helpers
-// ======================
-function $(id) { return document.getElementById(id); }
-function getVal(id) { return $(id)?.value ?? ""; }
-function setVal(id, v) { const el = $(id); if (el) el.value = v; }
-
-function formatCurrency(amount) {
-  return new Intl.NumberFormat("en-NG", { style: "currency", currency: "NGN" }).format(Number(amount) || 0);
-}
-
-function formatDateTime(value) {
-  if (!value) return "";
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return String(value);
-  return d.toLocaleString();
-}
-
-function isValidAmount(n) { return Number.isFinite(n) && n > 0; }
-function isValidQty(n) { return Number.isFinite(n) && n > 0; }
-
-function setNetUI() {
-  const net = $("netStatus");
-  if (!net) return;
-  net.textContent = navigator.onLine ? "Status: Online" : "Status: Offline (queued)";
-}
-
-async function setQueueUI() {
-  const q = $("queueStatus");
-  if (!q) return;
-  const items = await queueAll();
-  q.textContent = `Pending: ${items.length}`;
-}
-
-// ======================
-// API
+// API helper (body-aware headers)
 // ======================
 async function api(path, options = {}) {
-  const res = await fetch(`${API_BASE}${path}`, {
-    headers: { "Content-Type": "application/json" },
-    ...options
-  });
+  const url = `${API_BASE}${path}`;
+
+  const headers = { ...(options.headers || {}) };
+  const hasBody = options.body !== undefined && options.body !== null;
+
+  if (hasBody && !headers["Content-Type"]) headers["Content-Type"] = "application/json";
+
+  let res;
+  try {
+    res = await fetch(url, { ...options, headers });
+  } catch (e) {
+    const err = new Error(`Network error: Backend unreachable (${API_BASE})`);
+    err.data = { error: err.message };
+    throw err;
+  }
 
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || "Request failed");
+  if (!res.ok) {
+    const msg = data?.error || `Request failed (${res.status})`;
+    const err = new Error(msg);
+    err.data = data;
+    err.status = res.status;
+    throw err;
+  }
+
   return data;
 }
 
@@ -169,7 +153,47 @@ async function apiOrQueue(action) {
 }
 
 // ======================
-// Mini Chart
+// State
+// ======================
+let deferredPrompt;
+let lastReportType = null;
+
+let sales = [];
+let expenses = [];
+let products = [];
+let pendingUsage = [];
+
+// Helpers
+function $(id) { return document.getElementById(id); }
+function getVal(id) { return $(id)?.value ?? ""; }
+function setVal(id, v) { const el = $(id); if (el) el.value = v; }
+
+function formatCurrency(amount) {
+  return new Intl.NumberFormat("en-NG", { style: "currency", currency: "NGN" }).format(Number(amount) || 0);
+}
+function formatDateTime(value) {
+  if (!value) return "";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return String(value);
+  return d.toLocaleString();
+}
+function isValidAmount(n) { return Number.isFinite(n) && n > 0; }
+function isValidQty(n) { return Number.isFinite(n) && n > 0; }
+
+function setNetUI() {
+  const net = $("netStatus");
+  if (!net) return;
+  net.textContent = navigator.onLine ? "Status: Online" : "Status: Offline (queued)";
+}
+async function setQueueUI() {
+  const q = $("queueStatus");
+  if (!q) return;
+  const items = await queueAll();
+  q.textContent = `Pending: ${items.length}`;
+}
+
+// ======================
+// Mini chart
 // ======================
 function updateMiniChart(totalSales, totalExpenses) {
   const miniChart = $("miniChart");
@@ -274,14 +298,12 @@ function openUsageModal() {
   modal.classList.add("show");
   modal.setAttribute("aria-hidden", "false");
 }
-
 function closeUsageModal() {
   const modal = $("usageModal");
   if (!modal) return;
   modal.classList.remove("show");
   modal.setAttribute("aria-hidden", "true");
 }
-
 function clearUsage() {
   pendingUsage = [];
   renderUsageSummary();
@@ -289,7 +311,6 @@ function clearUsage() {
   if (!list) return;
   list.querySelectorAll("input[data-pid]").forEach(i => i.value = 0);
 }
-
 function saveUsage() {
   const list = $("usageList");
   if (!list) return;
@@ -307,7 +328,6 @@ function saveUsage() {
   renderUsageSummary();
   closeUsageModal();
 }
-
 function renderUsageSummary() {
   const box = $("usageSummary");
   if (!box) return;
@@ -579,7 +599,7 @@ function renderFinanceTable() {
   if (!table) return;
   table.innerHTML = "";
 
-  const all = [
+  const allRecords = [
     ...sales.map(s => ({
       id: s.id,
       type: "Sale",
@@ -598,7 +618,7 @@ function renderFinanceTable() {
     }))
   ].sort((a, b) => new Date(b.date) - new Date(a.date));
 
-  all.forEach(item => {
+  allRecords.forEach(item => {
     table.innerHTML += `
       <tr>
         <td>${item.type}</td>
@@ -656,27 +676,40 @@ function exportCSV() {
   window.open(`${API_BASE}/api/finance/export/finance.csv?period=${encodeURIComponent(lastReportType)}`, "_blank");
 }
 
+// ✅ UPDATED: Finance email sends status JSON like inventory
 async function emailFinanceCSV() {
-  if (!lastReportType) return alert("Generate a report first.");
-  if (!navigator.onLine) return alert("You must be online to email CSV.");
+  if (!lastReportType) {
+    showEmailStatus("error", "Please generate a report first.", { error: "No report type selected." });
+    return;
+  }
+  if (!navigator.onLine) {
+    showEmailStatus("error", "You must be online to email CSV.", { error: "Offline mode." });
+    return;
+  }
 
   const to = getVal("financeEmail").trim();
-  if (!to) return alert("Enter recipient email.");
+  if (!to) {
+    showEmailStatus("error", "Recipient email is required.", { error: "Enter a valid email." });
+    return;
+  }
+
+  showEmailStatus("sending", "Sending finance report email...", { to, period: lastReportType });
 
   try {
-    await api("/api/finance/email/finance", {
+    const resp = await api("/api/finance/email/finance", {
       method: "POST",
       body: JSON.stringify({ to, period: lastReportType })
     });
-    alert("✅ Finance report sent!");
+
+    showEmailStatus("success", "Finance report sent successfully ✅", resp);
     setVal("financeEmail", "");
-  } catch (e) {
-    alert(`❌ Finance email failed: ${e.message}`);
+  } catch (err) {
+    showEmailStatus("error", "Failed to send finance report ❌", err.data || { error: err.message });
   }
 }
 
 // ======================
-// Inventory CRUD (ask initial qty -> backend records Stock IN)
+// Inventory CRUD
 // ======================
 async function addProduct() {
   const name = getVal("pName").trim();
@@ -828,13 +861,12 @@ function renderProductsTable() {
   products.sort((a, b) => new Date(b.updated_at || 0) - new Date(a.updated_at || 0));
 
   products.forEach(p => {
-    const low = Number(p.qty) <= Number(p.reorder_level || 0);
     tbody.innerHTML += `
       <tr>
         <td>${p.name}</td>
         <td>${p.sku || ""}</td>
         <td>${p.unit || "pcs"}</td>
-        <td>${low ? `<strong>${p.qty}</strong>` : p.qty}</td>
+        <td>${p.qty}</td>
         <td>${p.reorder_level || 0}</td>
         <td>
           <div class="inv-actions">
@@ -864,15 +896,15 @@ async function emailInventoryCSV() {
   if (status) status.textContent = "Sending...";
 
   try {
-    await api("/api/inventory/email/inventory", {
+    const resp = await api("/api/inventory/email/inventory", {
       method: "POST",
       body: JSON.stringify({ to })
     });
 
-    if (status) status.textContent = "✅ Inventory report sent!";
+    if (status) status.textContent = `✅ Sent! ${JSON.stringify(resp)}`;
     setVal("invEmail", "");
   } catch (e) {
-    if (status) status.textContent = `❌ Failed: ${e.message}`;
+    if (status) status.textContent = `❌ Failed: ${e.data ? JSON.stringify(e.data) : e.message}`;
     alert(`❌ Inventory email failed: ${e.message}`);
   }
 }
@@ -908,7 +940,7 @@ window.addEventListener("online", async () => { setNetUI(); await flushQueue(); 
 window.addEventListener("offline", () => setNetUI());
 
 // ======================
-// PWA Install + Auto-update
+// PWA Install
 // ======================
 window.addEventListener("beforeinstallprompt", (e) => {
   e.preventDefault();
@@ -922,19 +954,6 @@ $("installBtn")?.addEventListener("click", () => {
   deferredPrompt.prompt();
   deferredPrompt = null;
 });
-
-if ("serviceWorker" in navigator) {
-  navigator.serviceWorker.register("service-worker.js").then((reg) => {
-    let refreshing = false;
-    navigator.serviceWorker.addEventListener("controllerchange", () => {
-      if (refreshing) return;
-      refreshing = true;
-      window.location.reload();
-    });
-
-    reg.update().catch(() => {});
-  });
-}
 
 // Initial
 setNetUI();
