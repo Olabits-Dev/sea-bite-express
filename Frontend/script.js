@@ -58,20 +58,14 @@ function isNetworkMailError(msg = "") {
   );
 }
 
+function isMailNotConfigured(payloadOrMsg) {
+  const raw = typeof payloadOrMsg === "string" ? payloadOrMsg : (payloadOrMsg?.error || "");
+  return String(raw).toUpperCase().includes("EMAIL NOT CONFIGURED");
+}
+
 /***********************
  * STATUS UI
  ***********************/
-function showEmailStatus(state, title, obj) {
-  const box = $("emailStatus");
-  if (!box) return;
-
-  box.style.display = "block";
-  box.className = `status-box ${state}`;
-
-  const json = obj ? `<pre>${escapeHtml(JSON.stringify(obj, null, 2))}</pre>` : "";
-  box.innerHTML = `<strong>${title}</strong>${json}`;
-}
-
 function setNetUI() {
   const net = $("netStatus");
   if (!net) return;
@@ -217,7 +211,7 @@ let products = [];
 let pendingUsage = [];
 
 /***********************
- * MINI CHART (lightweight bars)
+ * MINI CHART
  ***********************/
 function updateMiniChart(totalSales, totalExpenses) {
   const miniChart = $("miniChart");
@@ -470,7 +464,6 @@ async function addSale() {
     })
   };
 
-  // optimistic local
   sales.unshift(saleTemp);
   await idbPut("sales", saleTemp);
 
@@ -544,7 +537,6 @@ async function deleteRecord(id, type) {
   if (!confirm(`Delete this ${type.toLowerCase()} record?`)) return;
 
   if (type === "Sale") {
-    // optimistic local
     sales = sales.filter(s => String(s.id) !== String(id));
     await idbDelete("sales", id);
     renderFinanceTable();
@@ -562,7 +554,6 @@ async function deleteRecord(id, type) {
     return;
   }
 
-  // Expense
   expenses = expenses.filter(e => String(e.id) !== String(id));
   await idbDelete("expenses", id);
   renderFinanceTable();
@@ -611,7 +602,6 @@ async function editRecord(id, type) {
     return;
   }
 
-  // Expense
   const rec = expenses.find(x => String(x.id) === String(id));
   if (!rec) return alert("Record not found.");
 
@@ -642,7 +632,8 @@ async function editRecord(id, type) {
 }
 
 /***********************
- * REPORTS / CSV / EMAIL
+ * REPORTS / CSV
+ * ✅ Finance email removed completely
  ***********************/
 async function generateReport(type) {
   lastReportType = type;
@@ -680,82 +671,8 @@ function exportCSV() {
   window.open(`${API_BASE}/api/finance/export/finance.csv?period=${encodeURIComponent(lastReportType)}`, "_blank");
 }
 
-// SMTP finance email + JSON + fallback
-async function emailFinanceCSV() {
-  if (!lastReportType) {
-    showEmailStatus("error", "Please generate a report first.", { error: "No report type selected." });
-    return;
-  }
-  if (!navigator.onLine) {
-    showEmailStatus("error", "You must be online to email CSV.", { error: "Offline mode." });
-    return;
-  }
-
-  const to = getVal("financeEmail").trim();
-  if (!to) {
-    showEmailStatus("error", "Recipient email is required.", { error: "Enter a valid email." });
-    return;
-  }
-
-  showEmailStatus("sending", "Sending finance report email...", { to, period: lastReportType });
-
-  try {
-    const resp = await api("/api/finance/email/finance", {
-      method: "POST",
-      body: JSON.stringify({ to, period: lastReportType })
-    });
-
-    showEmailStatus("success", "Finance report sent successfully ✅", resp);
-    setVal("financeEmail", "");
-  } catch (e) {
-    const payload = e.data || { error: e.message };
-    showEmailStatus("error", "Failed to send finance report ❌", payload);
-
-    const msg = payload?.error || e.message || "";
-    if (isNetworkMailError(msg)) {
-      const ok = confirm("SMTP email failed due to network route (ENETUNREACH). Use Email (Easy) instead?");
-      if (ok) return emailFinanceEasy();
-    }
-  }
-}
-
-// Easy finance email (download CSV + mailto)
-async function emailFinanceEasy() {
-  if (!lastReportType) {
-    showEmailStatus("error", "Please generate a report first.", { error: "No report type selected." });
-    return;
-  }
-
-  const to = getVal("financeEmail").trim();
-  if (!to) {
-    showEmailStatus("error", "Recipient email is required.", { error: "Enter a valid email." });
-    return;
-  }
-
-  showEmailStatus("sending", "Opening your email app...", { to, period: lastReportType });
-
-  if (navigator.onLine) {
-    window.open(`${API_BASE}/api/finance/export/finance.csv?period=${encodeURIComponent(lastReportType)}`, "_blank");
-  }
-
-  const body =
-`Hello,
-
-Please find the Finance Report (${lastReportType.toUpperCase()}).
-
-✅ I have downloaded the CSV report for you. Please attach the downloaded file to this email.
-
-Report Type: ${lastReportType.toUpperCase()}
-Generated: ${new Date().toLocaleString()}
-
-Regards.`;
-
-  openMailto(to, `Finance Report (${lastReportType.toUpperCase()}) - SeaBite Tracker`, body);
-  showEmailStatus("success", "Email app opened ✅ (Attach the downloaded CSV)", { ok: true });
-}
-
 /***********************
- * INVENTORY
+ * INVENTORY + LOSS
  ***********************/
 async function addProduct() {
   const name = getVal("pName").trim();
@@ -890,7 +807,6 @@ async function stockMove(productId, type) {
   }
 }
 
-// Spoilage/Mishandling
 async function recordLoss(productId, reason) {
   const p = products.find(x => String(x.id) === String(productId));
   if (!p) return alert("Product not found.");
@@ -963,7 +879,6 @@ function downloadInventoryCSV() {
   window.open(`${API_BASE}/api/inventory/export/inventory.csv`, "_blank");
 }
 
-// SMTP inventory email + JSON + fallback
 async function emailInventoryCSV() {
   if (!navigator.onLine) return alert("You must be online to email inventory CSV.");
 
@@ -986,8 +901,10 @@ async function emailInventoryCSV() {
     if (status) status.textContent = `❌ Failed: ${JSON.stringify(payload)}`;
 
     const msg = payload?.error || e.message || "";
-    if (isNetworkMailError(msg)) {
-      const ok = confirm("SMTP email failed due to network route (ENETUNREACH). Use Email (Easy) instead?");
+
+    // ✅ if email is not configured OR network fails → prompt Email Easy
+    if (isMailNotConfigured(payload) || isNetworkMailError(msg)) {
+      const ok = confirm("SMTP email is not available right now. Use Email (Easy) instead?");
       if (ok) return emailInventoryEasy();
     }
 
@@ -995,7 +912,6 @@ async function emailInventoryCSV() {
   }
 }
 
-// Easy inventory email (download CSV + mailto)
 async function emailInventoryEasy() {
   const to = getVal("invEmail").trim();
   if (!to) return alert("Enter recipient email.");
