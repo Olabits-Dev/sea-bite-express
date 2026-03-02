@@ -117,7 +117,13 @@ function readResetToken(req) {
 
 app.post("/api/admin/reset", async (req, res) => {
   try {
-    const provided = readResetToken(req);
+    const provided =
+      String(req.headers["x-admin-reset-token"] || "").trim() ||
+      (String(req.headers["authorization"] || "").toLowerCase().startsWith("bearer ")
+        ? String(req.headers["authorization"]).slice(7).trim()
+        : "") ||
+      String(req.body?.token || "").trim();
+
     const expected = String(process.env.ADMIN_RESET_TOKEN || "").trim();
 
     if (!expected) {
@@ -127,39 +133,37 @@ app.post("/api/admin/reset", async (req, res) => {
       return res.status(401).json({ error: "Unauthorized" });
     }
 
-    // Safe reset: truncate only tables that exist
-    // (works even if you rename or don’t have some tables yet)
-    const sql = `
-DO $$
-DECLARE
-  t text;
-BEGIN
-  FOREACH t IN ARRAY ARRAY[
-    'sale_items',
-    'sales',
-    'expenses',
-    'stock_movements',
-    'losses',
-    'inventory_losses',
-    'products'
-  ]
-  LOOP
-    IF to_regclass(t) IS NOT NULL THEN
-      EXECUTE format('TRUNCATE TABLE %I RESTART IDENTITY CASCADE', t);
-    END IF;
-  END LOOP;
-END $$;
-`;
+    // ✅ Only truncate tables that exist (no more "is not a table" errors)
+    const tables = [
+      "sale_items",
+      "sales",
+      "expenses",
+      "stock_movements",
+      "losses",
+      "inventory_losses", // keep it here; it will be skipped if it doesn't exist
+      "products",
+    ];
 
-    await pool.query(sql);
+    const truncated = [];
 
-    return res.json({ ok: true, message: "Database reset completed" });
+    for (const t of tables) {
+      const exists = await pool.query("SELECT to_regclass($1) AS reg", [t]);
+      if (exists.rows[0]?.reg) {
+        await pool.query(`TRUNCATE TABLE ${t} RESTART IDENTITY CASCADE`);
+        truncated.push(t);
+      }
+    }
+
+    return res.json({
+      ok: true,
+      message: "Database reset completed",
+      truncated,
+    });
   } catch (e) {
     console.error("RESET ERROR:", e);
     return res.status(500).json({ error: e.message || "Reset failed" });
   }
 });
-
 /**
  * API routes
  */
