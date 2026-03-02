@@ -23,23 +23,6 @@
     <span id="queueStatus">Pending: 0</span>
   </div>
 
-  <!-- ✅ ADMIN TOOLS (RESET) -->
-  <div class="grid admin-grid">
-    <div class="form-section">
-      <h2>Admin Tools</h2>
-      <p class="hint">
-        Reset clears test data (sales, expenses, movements) safely. Inventory products may also be cleared depending on backend rule.
-      </p>
-
-      <input type="password" id="adminToken" placeholder="Admin reset token" autocomplete="off" />
-      <button type="button" class="danger-solid" onclick="adminResetDatabase()">
-        Reset Database
-      </button>
-
-      <div id="adminResetStatus" class="status"></div>
-    </div>
-  </div>
-
   <div class="grid">
     <div class="form-section">
       <h2>Add Sale</h2>
@@ -98,7 +81,7 @@
 
   <h2>All Records</h2>
   <div class="table-wrap">
-    <table class="records-table finance-table mobile-cards">
+    <table class="records-table finance-table">
       <colgroup>
         <col style="width: 90px" />
         <col style="width: 140px" />
@@ -153,14 +136,14 @@
   </div>
 
   <div class="table-wrap">
-    <table class="records-table inventory-table mobile-cards">
+    <table class="records-table inventory-table">
       <colgroup>
         <col />
         <col style="width: 140px" />
         <col style="width: 110px" />
         <col style="width: 100px" />
         <col style="width: 110px" />
-        <col style="width: 380px" />
+        <col style="width: 420px" />
       </colgroup>
       <thead>
         <tr>
@@ -179,26 +162,28 @@
   <!-- Loss History -->
   <div class="section-title">
     <h2>Loss History</h2>
-    <p class="muted">Spoilage & Mishandling records</p>
+    <p class="muted">Spoilage / Mishandling log</p>
   </div>
 
-  <div class="report-actions" style="margin-top: 6px;">
+  <div class="report-actions">
     <button type="button" onclick="exportLossCSV()">Export Loss CSV</button>
   </div>
 
   <div class="table-wrap">
-    <table class="records-table loss-table mobile-cards">
+    <table class="records-table inventory-table">
       <colgroup>
         <col />
+        <col style="width: 90px" />
         <col style="width: 120px" />
-        <col style="width: 140px" />
+        <col style="width: 150px" />
         <col style="width: 220px" />
-        <col style="width: 220px" />
+        <col style="width: 180px" />
       </colgroup>
       <thead>
         <tr>
           <th>Product</th>
           <th>Qty</th>
+          <th>Unit</th>
           <th>Reason</th>
           <th>Date</th>
           <th class="action-col">Action</th>

@@ -65,11 +65,6 @@ h2 { margin: 18px 0 10px; }
   gap: 16px;
 }
 
-.admin-grid {
-  grid-template-columns: 1fr;
-  margin-bottom: 14px;
-}
-
 .form-section,
 .report-section {
   background: var(--card);
@@ -88,7 +83,9 @@ input {
   outline: none;
 }
 
-input:focus { border-color: var(--primary); }
+input:focus {
+  border-color: var(--primary);
+}
 
 button {
   padding: 10px 14px;
@@ -103,11 +100,12 @@ button {
 
 button:hover { background: var(--primaryHover); }
 
-.danger-solid { background: var(--danger); }
-.danger-solid:hover { background: var(--dangerHover); }
-
-.secondary-btn { background: #111827; }
-.secondary-btn:hover { background: #0b1220; }
+.secondary-btn {
+  background: #111827;
+}
+.secondary-btn:hover {
+  background: #0b1220;
+}
 
 .report-actions {
   display: flex;
@@ -115,40 +113,34 @@ button:hover { background: var(--primaryHover); }
   gap: 10px;
 }
 
-/* ✅ Records table wrap (horizontal swipe on small screens) */
+/* Records table wrap */
 .table-wrap {
   width: 100%;
-  overflow-x: auto;
-  -webkit-overflow-scrolling: touch;
+  overflow-x: auto; /* keep horizontal on mobile */
   border-radius: var(--radius);
   box-shadow: var(--shadow);
   background: var(--card);
   margin-top: 10px;
 }
 
-/* optional: show scrollbar nicely on desktop */
-.table-wrap::-webkit-scrollbar { height: 10px; }
-.table-wrap::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 999px; }
-.table-wrap::-webkit-scrollbar-track { background: #f3f4f6; border-radius: 999px; }
-
 .records-table {
   width: 100%;
   border-collapse: collapse;
-  min-width: 900px; /* keeps table wide so mobile can scroll */
+  min-width: 900px;
 }
 
 .records-table th,
 .records-table td {
   padding: 12px 12px;
   border-bottom: 1px solid var(--border);
+  border-right: 1px solid var(--border); /* ✅ column lines */
   text-align: left;
   vertical-align: top;
-  white-space: nowrap; /* ✅ prevents vertical stacking */
 }
 
-.records-table th + th,
-.records-table td + td {
-  border-left: 1px solid var(--border); /* ✅ column lines */
+.records-table th:last-child,
+.records-table td:last-child {
+  border-right: none; /* avoid double border at end */
 }
 
 .records-table thead th {
@@ -184,6 +176,7 @@ button:hover { background: var(--primaryHover); }
 .warn-btn { background: var(--purple); }
 .warn-btn:hover { background: var(--purpleHover); }
 
+/* ✅ Make inventory action buttons smaller + pro */
 .inv-actions {
   display: flex;
   flex-wrap: wrap;
@@ -193,11 +186,9 @@ button:hover { background: var(--primaryHover); }
 
 .inv-actions button {
   padding: 6px 10px;
-  font-size: 0.82rem;
-  border-radius: 9px;
+  font-size: 12px;
+  border-radius: 8px;
   margin: 0;
-  line-height: 1.1;
-  white-space: nowrap;
 }
 
 /* Usage summary */
@@ -235,7 +226,10 @@ button:hover { background: var(--primaryHover); }
   font-weight: 700;
 }
 
-.mini-bars { display: grid; gap: 10px; }
+.mini-bars {
+  display: grid;
+  gap: 10px;
+}
 
 .mini-bar-row {
   display: grid;
@@ -339,7 +333,7 @@ button:hover { background: var(--primaryHover); }
   border-top: 1px solid var(--border);
 }
 
-/* Status */
+/* Inventory status */
 .status {
   margin-top: 10px;
   color: var(--muted);
@@ -350,12 +344,16 @@ button:hover { background: var(--primaryHover); }
 @media (max-width: 900px) {
   body { padding: 14px; }
   .grid { grid-template-columns: 1fr; }
-  .records-table { min-width: 820px; } /* still scrollable */
-  .mini-bar-row { grid-template-columns: 70px 1fr 120px; }
+
+  /* keep tables visible + scrollable */
+  .records-table { min-width: 900px; }
+
+  .mini-bar-row {
+    grid-template-columns: 70px 1fr 120px;
+  }
 }
 
 @media (max-width: 520px) {
-  .records-table { min-width: 780px; } /* swipe */
   button { width: 100%; }
   .report-actions button { width: auto; }
 }
