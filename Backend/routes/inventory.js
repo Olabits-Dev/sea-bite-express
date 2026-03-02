@@ -1,479 +1,600 @@
-// Backend/routes/inventory.js
 const express = require("express");
 const router = express.Router();
+const { pool } = require("../db");
 
-const { all, get, query, pool } = require("../db");
-const { sendMailWithAttachment } = require("../utils/mailer");
+/**
+ * SCHEMA: products + losses + stock_movements
+ * - category: SEAFOOD | KITCHEN
+ * - portion_size: qty per 1 portion (SEAFOOD only)
+ */
+async function ensureSchema() {
+  // Products table columns
+  await pool.query(`
+    ALTER TABLE products
+    ADD COLUMN IF NOT EXISTS category TEXT DEFAULT 'KITCHEN'
+  `);
 
-function cleanStr(v, fallback = "") { return String(v ?? fallback).trim(); }
-function toNumber(v, fallback = 0) { const n = Number(v); return Number.isFinite(n) ? n : fallback; }
+  await pool.query(`
+    ALTER TABLE products
+    ADD COLUMN IF NOT EXISTS portion_size NUMERIC
+  `);
 
-function csvEscape(value) {
-  const s = String(value ?? "");
-  if (/[",\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
-  return s;
+  // Ensure updated_at exists (some older schemas miss it)
+  await pool.query(`
+    ALTER TABLE products
+    ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW()
+  `);
+
+  // Losses table
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS losses (
+      id SERIAL PRIMARY KEY,
+      product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+      qty NUMERIC NOT NULL,
+      reason TEXT NOT NULL,
+      note TEXT DEFAULT '',
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+
+  // Stock movements log (optional, but useful)
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS stock_movements (
+      id SERIAL PRIMARY KEY,
+      product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+      type TEXT NOT NULL,               -- IN | OUT | LOSS
+      qty_change NUMERIC NOT NULL,      -- positive or negative delta
+      mode TEXT DEFAULT 'QTY',          -- QTY | PORTION
+      note TEXT DEFAULT '',
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
 }
 
-function buildInventoryCsv(rows) {
-  let csv = "";
-  csv += "INVENTORY REPORT\n";
-  csv += `Generated On,${csvEscape(new Date().toLocaleString())}\n\n`;
-  csv += "ID,Name,SKU,Unit,Qty,Reorder Level,Updated At\n";
+// fire and forget schema ensure (safe)
+ensureSchema().catch((e) => console.error("ensureSchema error:", e));
 
-  for (const r of rows) {
-    csv += [
-      csvEscape(r.id),
-      csvEscape(r.name),
-      csvEscape(r.sku || ""),
-      csvEscape(r.unit || ""),
-      csvEscape(r.qty ?? 0),
-      csvEscape(r.reorder_level ?? 0),
-      csvEscape(r.updated_at || "")
-    ].join(",") + "\n";
-  }
-  return csv;
+function normCategory(v) {
+  const s = String(v || "KITCHEN").trim().toUpperCase();
+  return s === "SEAFOOD" ? "SEAFOOD" : "KITCHEN";
 }
 
-function buildLossCsv(rows) {
-  let csv = "";
-  csv += "LOSS HISTORY REPORT\n";
-  csv += `Generated On,${csvEscape(new Date().toLocaleString())}\n\n`;
-  csv += "Loss ID,Product ID,Product,Unit,Qty Lost,Reason,Note,Date\n";
-
-  for (const r of rows) {
-    csv += [
-      csvEscape(r.id),
-      csvEscape(r.product_id),
-      csvEscape(r.product_name),
-      csvEscape(r.product_unit || ""),
-      csvEscape(r.qty),
-      csvEscape(r.reason),
-      csvEscape(r.note || ""),
-      csvEscape(r.created_at || "")
-    ].join(",") + "\n";
-  }
-  return csv;
+function toNumber(v, fallback = 0) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : fallback;
 }
 
-/** ---------------------------
- * PRODUCTS
- * --------------------------*/
+function isPositive(n) {
+  return Number.isFinite(n) && n > 0;
+}
 
-// GET all products
+function isNonNeg(n) {
+  return Number.isFinite(n) && n >= 0;
+}
+
+function effectivePortionSize(product) {
+  const ps = toNumber(product?.portion_size, 0);
+  return ps > 0 ? ps : 0;
+}
+
+/**
+ * GET all products
+ * Frontend expects: category, portion_size (nullable), qty, unit, reorder_level, updated_at
+ */
 router.get("/products", async (req, res) => {
   try {
-    const rows = await all(
-      `SELECT id, name, sku, unit, qty, reorder_level, updated_at
-       FROM products
-       ORDER BY updated_at DESC, id DESC`
-    );
+    const { rows } = await pool.query(`
+      SELECT
+        id, name, sku, unit, qty, reorder_level,
+        COALESCE(UPPER(category), 'KITCHEN') AS category,
+        portion_size,
+        updated_at,
+        created_at
+      FROM products
+      ORDER BY updated_at DESC NULLS LAST, id DESC
+    `);
     res.json(rows);
   } catch (e) {
-    res.status(500).json({ error: e.message || "Failed to fetch products" });
+    console.error("GET /products error:", e);
+    res.status(500).json({ error: "Failed to load products" });
   }
 });
 
-// CREATE product + initial_qty auto stock-in
+/**
+ * CREATE product
+ * Body:
+ * { name, sku, unit, reorder_level, initial_qty, category, portion_size }
+ *
+ * Rules:
+ * - SEAFOOD requires portion_size > 0
+ * - KITCHEN ignores portion_size (stored as null)
+ */
 router.post("/products", async (req, res) => {
-  const name = cleanStr(req.body?.name);
-  const sku = cleanStr(req.body?.sku);
-  const unit = cleanStr(req.body?.unit || "pcs") || "pcs";
-  const reorder_level = toNumber(req.body?.reorder_level, 0);
-  const initial_qty = toNumber(req.body?.initial_qty, 0);
-
-  if (!name) return res.status(400).json({ error: "Product name is required" });
-  if (initial_qty < 0 || Number.isNaN(initial_qty)) {
-    return res.status(400).json({ error: "initial_qty must be 0 or more" });
-  }
-
-  const client = await pool.connect();
   try {
-    await client.query("BEGIN");
+    const name = String(req.body.name || "").trim();
+    const sku = String(req.body.sku || "").trim();
+    const reorder_level = toNumber(req.body.reorder_level, 0);
+    const initial_qty = toNumber(req.body.initial_qty, 0);
+    const category = normCategory(req.body.category);
 
-    const insert = await client.query(
-      `INSERT INTO products (name, sku, unit, qty, reorder_level, updated_at)
-       VALUES ($1,$2,$3,$4,$5, NOW())
-       RETURNING id, name, sku, unit, qty, reorder_level, updated_at`,
-      [name, sku, unit, initial_qty, reorder_level]
+    if (!name) return res.status(400).json({ error: "Product name is required" });
+    if (!isNonNeg(initial_qty)) return res.status(400).json({ error: "Initial quantity must be 0 or more" });
+
+    let unit = String(req.body.unit || "").trim() || "pcs";
+    let portion_size = req.body.portion_size;
+
+    if (category === "SEAFOOD") {
+      const ps = toNumber(portion_size, 0);
+      if (!isPositive(ps)) {
+        return res.status(400).json({ error: "Seafood requires portion_size > 0" });
+      }
+      portion_size = ps;
+      // unit can still be stored, but seafood uses Qty+Portion in UI
+      // keep unit as given (or "qty")
+      unit = unit || "qty";
+    } else {
+      portion_size = null; // kitchen doesn't use portion_size
+      unit = unit || "pcs";
+    }
+
+    const { rows } = await pool.query(
+      `
+      INSERT INTO products
+        (name, sku, unit, qty, reorder_level, category, portion_size, updated_at)
+      VALUES
+        ($1,$2,$3,$4,$5,$6,$7,NOW())
+      RETURNING
+        id, name, sku, unit, qty, reorder_level,
+        COALESCE(UPPER(category), 'KITCHEN') AS category,
+        portion_size,
+        updated_at,
+        created_at
+      `,
+      [name, sku || null, unit, initial_qty, reorder_level, category, portion_size]
     );
 
-    const product = insert.rows[0];
-
+    // optional movement log for initial stock
     if (initial_qty > 0) {
-      await client.query(
-        `INSERT INTO stock_movements (product_id, type, qty, reason, note, created_at)
-         VALUES ($1,'IN',$2,$3,$4, NOW())`,
-        [product.id, initial_qty, "INITIAL", "Initial Stock IN on product creation"]
+      await pool.query(
+        `
+        INSERT INTO stock_movements (product_id, type, qty_change, mode, note)
+        VALUES ($1, 'IN', $2, 'QTY', $3)
+        `,
+        [rows[0].id, initial_qty, "Initial stock in"]
       );
     }
 
-    await client.query("COMMIT");
-    res.json(product);
+    res.json(rows[0]);
   } catch (e) {
-    await client.query("ROLLBACK");
-    res.status(500).json({ error: e.message || "Failed to create product" });
-  } finally {
-    client.release();
+    console.error("POST /products error:", e);
+    res.status(500).json({ error: "Failed to create product" });
   }
 });
 
-// UPDATE product metadata
+/**
+ * UPDATE product
+ * Body:
+ * { name, sku, category, unit, reorder_level, portion_size }
+ */
 router.put("/products/:id", async (req, res) => {
   try {
-    const id = toNumber(req.params.id);
-    const name = cleanStr(req.body?.name);
-    const sku = cleanStr(req.body?.sku);
-    const unit = cleanStr(req.body?.unit || "pcs") || "pcs";
-    const reorder_level = toNumber(req.body?.reorder_level, 0);
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ error: "Invalid product id" });
 
-    if (!name) return res.status(400).json({ error: "Product name is required" });
+    const { rows: found } = await pool.query(`SELECT * FROM products WHERE id=$1`, [id]);
+    if (!found.length) return res.status(404).json({ error: "Not found" });
 
-    const row = await get(
-      `UPDATE products
-       SET name=$1, sku=$2, unit=$3, reorder_level=$4, updated_at=NOW()
-       WHERE id=$5
-       RETURNING id, name, sku, unit, qty, reorder_level, updated_at`,
-      [name, sku, unit, reorder_level, id]
+    const prev = found[0];
+
+    const name = String(req.body.name ?? prev.name).trim();
+    const sku = String(req.body.sku ?? prev.sku ?? "").trim();
+    const reorder_level = toNumber(req.body.reorder_level ?? prev.reorder_level, 0);
+    const category = normCategory(req.body.category ?? prev.category);
+    let unit = String(req.body.unit ?? prev.unit ?? "").trim() || "pcs";
+
+    let portion_size = req.body.portion_size;
+
+    if (category === "SEAFOOD") {
+      const ps = toNumber(portion_size ?? prev.portion_size, 0);
+      if (!isPositive(ps)) {
+        return res.status(400).json({ error: "Seafood requires portion_size > 0" });
+      }
+      portion_size = ps;
+      unit = unit || "qty";
+    } else {
+      portion_size = null;
+      unit = unit || "pcs";
+    }
+
+    const { rows } = await pool.query(
+      `
+      UPDATE products
+      SET name=$1, sku=$2, unit=$3, reorder_level=$4,
+          category=$5, portion_size=$6, updated_at=NOW()
+      WHERE id=$7
+      RETURNING
+        id, name, sku, unit, qty, reorder_level,
+        COALESCE(UPPER(category), 'KITCHEN') AS category,
+        portion_size,
+        updated_at,
+        created_at
+      `,
+      [name, sku || null, unit, reorder_level, category, portion_size, id]
     );
 
-    if (!row) return res.status(404).json({ error: "Product not found" });
-    res.json(row);
+    res.json(rows[0]);
   } catch (e) {
-    res.status(500).json({ error: e.message || "Failed to update product" });
+    console.error("PUT /products/:id error:", e);
+    res.status(500).json({ error: "Failed to update product" });
   }
 });
 
-// DELETE product
+/**
+ * DELETE product
+ */
 router.delete("/products/:id", async (req, res) => {
   try {
-    const id = toNumber(req.params.id);
-    const row = await get(`SELECT id FROM products WHERE id=$1`, [id]);
-    if (!row) return res.status(404).json({ error: "Product not found" });
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ error: "Invalid product id" });
 
-    await query(`DELETE FROM products WHERE id=$1`, [id]);
+    const { rowCount } = await pool.query(`DELETE FROM products WHERE id=$1`, [id]);
+    if (!rowCount) return res.status(404).json({ error: "Not found" });
+
     res.json({ ok: true });
   } catch (e) {
-    res.status(500).json({ error: e.message || "Failed to delete product" });
+    console.error("DELETE /products/:id error:", e);
+    res.status(500).json({ error: "Failed to delete product" });
   }
 });
 
-// Stock move IN/OUT (manual)
+/**
+ * STOCK MOVEMENT
+ * POST /products/:id/move
+ * Body: { type: "IN"|"OUT", qty: number, mode?: "QTY"|"PORTION", note?: string }
+ *
+ * - For SEAFOOD:
+ *   - mode PORTION => qty_change = qty * portion_size
+ *   - mode QTY => qty_change = qty
+ * - For KITCHEN:
+ *   - always uses qty as quantity change (mode ignored)
+ */
 router.post("/products/:id/move", async (req, res) => {
-  const id = toNumber(req.params.id);
-  const type = cleanStr(req.body?.type).toUpperCase();
-  const qty = toNumber(req.body?.qty, 0);
-  const note = cleanStr(req.body?.note);
-  const reason = cleanStr(req.body?.reason || (type === "IN" ? "MANUAL_IN" : "MANUAL_OUT"));
-
-  if (!["IN", "OUT"].includes(type)) return res.status(400).json({ error: "type must be IN or OUT" });
-  if (qty <= 0) return res.status(400).json({ error: "qty must be greater than 0" });
-
-  const client = await pool.connect();
   try {
-    await client.query("BEGIN");
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ error: "Invalid product id" });
 
-    const p = await client.query(`SELECT id, qty FROM products WHERE id=$1 FOR UPDATE`, [id]);
-    if (!p.rows[0]) {
-      await client.query("ROLLBACK");
-      return res.status(404).json({ error: "Product not found" });
+    const typeRaw = String(req.body.type || "").trim().toUpperCase();
+    const modeRaw = String(req.body.mode || "QTY").trim().toUpperCase();
+    const note = String(req.body.note || "").trim();
+
+    if (!["IN", "OUT"].includes(typeRaw)) {
+      return res.status(400).json({ error: "type must be IN or OUT" });
     }
 
-    const currentQty = Number(p.rows[0].qty) || 0;
-    const newQty = type === "IN" ? currentQty + qty : currentQty - qty;
+    const qtyIn = toNumber(req.body.qty, NaN);
+    if (!isPositive(qtyIn)) return res.status(400).json({ error: "qty must be > 0" });
 
-    if (newQty < 0) {
-      await client.query("ROLLBACK");
-      return res.status(400).json({ error: "Insufficient stock" });
+    const { rows: found } = await pool.query(`SELECT * FROM products WHERE id=$1`, [id]);
+    if (!found.length) return res.status(404).json({ error: "Not found" });
+
+    const product = found[0];
+    const category = normCategory(product.category);
+
+    let qtyChange = qtyIn;
+
+    if (category === "SEAFOOD" && modeRaw === "PORTION") {
+      const ps = effectivePortionSize(product);
+      if (ps <= 0) return res.status(400).json({ error: "Seafood portion_size is not set properly" });
+      qtyChange = qtyIn * ps;
     }
 
-    await client.query(
-      `INSERT INTO stock_movements (product_id, type, qty, reason, note, created_at)
-       VALUES ($1,$2,$3,$4,$5, NOW())`,
-      [id, type, qty, reason, note]
-    );
+    if (typeRaw === "OUT") qtyChange = -qtyChange;
 
-    const updated = await client.query(
-      `UPDATE products SET qty=$1, updated_at=NOW()
-       WHERE id=$2
-       RETURNING id, name, sku, unit, qty, reorder_level, updated_at`,
+    const newQty = toNumber(product.qty, 0) + qtyChange;
+    if (newQty < 0) return res.status(400).json({ error: "Insufficient stock" });
+
+    const { rows: updated } = await pool.query(
+      `
+      UPDATE products
+      SET qty=$1, updated_at=NOW()
+      WHERE id=$2
+      RETURNING
+        id, name, sku, unit, qty, reorder_level,
+        COALESCE(UPPER(category), 'KITCHEN') AS category,
+        portion_size,
+        updated_at,
+        created_at
+      `,
       [newQty, id]
     );
 
-    await client.query("COMMIT");
-    res.json(updated.rows[0]);
+    // movement log
+    await pool.query(
+      `
+      INSERT INTO stock_movements (product_id, type, qty_change, mode, note)
+      VALUES ($1, $2, $3, $4, $5)
+      `,
+      [id, typeRaw, qtyChange, (category === "SEAFOOD" ? modeRaw : "QTY"), note]
+    );
+
+    res.json(updated[0]);
   } catch (e) {
-    await client.query("ROLLBACK");
-    res.status(500).json({ error: e.message || "Failed to move stock" });
-  } finally {
-    client.release();
+    console.error("POST /products/:id/move error:", e);
+    res.status(500).json({ error: "Failed to record stock movement" });
   }
 });
 
-// record inventory loss (spoilage/mishandling) = stock OUT with reason
+/**
+ * LOSS RECORD
+ * POST /products/:id/loss
+ * Body: { qty: number, reason: "SPOILAGE"|"MISHANDLING", note?: string, mode?: "QTY"|"PORTION" }
+ */
 router.post("/products/:id/loss", async (req, res) => {
-  const id = toNumber(req.params.id);
-  const qty = toNumber(req.body?.qty, 0);
-  const reason = cleanStr(req.body?.reason).toUpperCase(); // SPOILAGE | MISHANDLING
-  const note = cleanStr(req.body?.note);
-
-  if (!["SPOILAGE", "MISHANDLING"].includes(reason)) {
-    return res.status(400).json({ error: "reason must be SPOILAGE or MISHANDLING" });
-  }
-  if (qty <= 0) return res.status(400).json({ error: "qty must be greater than 0" });
-
-  const client = await pool.connect();
   try {
-    await client.query("BEGIN");
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ error: "Invalid product id" });
 
-    const p = await client.query(`SELECT id, qty FROM products WHERE id=$1 FOR UPDATE`, [id]);
-    if (!p.rows[0]) {
-      await client.query("ROLLBACK");
-      return res.status(404).json({ error: "Product not found" });
+    const reason = String(req.body.reason || "").trim().toUpperCase();
+    if (!["SPOILAGE", "MISHANDLING"].includes(reason)) {
+      return res.status(400).json({ error: "reason must be SPOILAGE or MISHANDLING" });
     }
 
-    const currentQty = Number(p.rows[0].qty) || 0;
-    const newQty = currentQty - qty;
-    if (newQty < 0) {
-      await client.query("ROLLBACK");
-      return res.status(400).json({ error: "Insufficient stock" });
+    const note = String(req.body.note || "").trim();
+    const modeRaw = String(req.body.mode || "QTY").trim().toUpperCase();
+
+    const qtyIn = toNumber(req.body.qty, NaN);
+    if (!isPositive(qtyIn)) return res.status(400).json({ error: "qty must be > 0" });
+
+    const { rows: found } = await pool.query(`SELECT * FROM products WHERE id=$1`, [id]);
+    if (!found.length) return res.status(404).json({ error: "Not found" });
+
+    const product = found[0];
+    const category = normCategory(product.category);
+
+    let lossQty = qtyIn;
+    if (category === "SEAFOOD" && modeRaw === "PORTION") {
+      const ps = effectivePortionSize(product);
+      if (ps <= 0) return res.status(400).json({ error: "Seafood portion_size is not set properly" });
+      lossQty = qtyIn * ps;
     }
 
-    const ins = await client.query(
-      `INSERT INTO stock_movements (product_id, type, qty, reason, note, created_at)
-       VALUES ($1,'OUT',$2,$3,$4, NOW())
-       RETURNING id, product_id, type, qty, reason, note, created_at`,
-      [id, qty, reason, note]
+    const currentQty = toNumber(product.qty, 0);
+    if (currentQty - lossQty < 0) return res.status(400).json({ error: "Insufficient stock" });
+
+    // update product qty
+    const newQty = currentQty - lossQty;
+
+    await pool.query(`UPDATE products SET qty=$1, updated_at=NOW() WHERE id=$2`, [newQty, id]);
+
+    // create loss record
+    const { rows: lossRows } = await pool.query(
+      `
+      INSERT INTO losses (product_id, qty, reason, note)
+      VALUES ($1, $2, $3, $4)
+      RETURNING *
+      `,
+      [id, lossQty, reason, note]
     );
 
-    const updated = await client.query(
-      `UPDATE products SET qty=$1, updated_at=NOW()
-       WHERE id=$2
-       RETURNING id, name, sku, unit, qty, reorder_level, updated_at`,
-      [newQty, id]
+    // log movement as LOSS
+    await pool.query(
+      `
+      INSERT INTO stock_movements (product_id, type, qty_change, mode, note)
+      VALUES ($1, 'LOSS', $2, $3, $4)
+      `,
+      [id, -lossQty, (category === "SEAFOOD" ? modeRaw : "QTY"), note || reason]
     );
 
-    await client.query("COMMIT");
-    res.json({ ok: true, loss: ins.rows[0], updated: updated.rows[0] });
+    res.json({ ok: true, loss: lossRows[0] });
   } catch (e) {
-    await client.query("ROLLBACK");
-    res.status(500).json({ error: e.message || "Failed to record loss" });
-  } finally {
-    client.release();
+    console.error("POST /products/:id/loss error:", e);
+    res.status(500).json({ error: "Failed to record loss" });
   }
 });
 
-/** ---------------------------
- * LOSS HISTORY (NEW)
- * --------------------------*/
-
-// List loss history (from stock_movements)
+/**
+ * GET losses
+ */
 router.get("/losses", async (req, res) => {
   try {
-    const rows = await all(
-      `SELECT sm.id, sm.product_id, p.name AS product_name, p.unit AS product_unit,
-              sm.qty, sm.reason, sm.note, sm.created_at
-       FROM stock_movements sm
-       JOIN products p ON p.id = sm.product_id
-       WHERE sm.type='OUT' AND sm.reason IN ('SPOILAGE','MISHANDLING')
-       ORDER BY sm.created_at DESC, sm.id DESC`
+    const { rows } = await pool.query(
+      `
+      SELECT
+        l.*,
+        p.name AS product_name,
+        p.unit AS product_unit
+      FROM losses l
+      LEFT JOIN products p ON p.id = l.product_id
+      ORDER BY l.created_at DESC, l.id DESC
+      `
     );
     res.json(rows);
   } catch (e) {
-    res.status(500).json({ error: e.message || "Failed to fetch losses" });
+    console.error("GET /losses error:", e);
+    res.status(500).json({ error: "Failed to load losses" });
   }
 });
 
-// Edit loss record (adjust product qty safely)
+/**
+ * UPDATE loss (frontend supports edit)
+ * PUT /losses/:id
+ * Body: { qty, reason, note }
+ * NOTE: This does not auto-adjust product qty (to keep logic predictable).
+ * If you want auto-adjust, tell me and I’ll implement safely.
+ */
 router.put("/losses/:id", async (req, res) => {
-  const lossId = toNumber(req.params.id);
-  const qtyNew = toNumber(req.body?.qty, 0);
-  const reasonNew = cleanStr(req.body?.reason).toUpperCase();
-  const noteNew = cleanStr(req.body?.note);
-
-  if (!lossId) return res.status(400).json({ error: "Invalid loss id" });
-  if (!["SPOILAGE", "MISHANDLING"].includes(reasonNew)) {
-    return res.status(400).json({ error: "reason must be SPOILAGE or MISHANDLING" });
-  }
-  if (qtyNew <= 0) return res.status(400).json({ error: "qty must be greater than 0" });
-
-  const client = await pool.connect();
   try {
-    await client.query("BEGIN");
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ error: "Invalid loss id" });
 
-    // lock loss row
-    const lossRes = await client.query(
-      `SELECT id, product_id, qty, reason
-       FROM stock_movements
-       WHERE id=$1 AND type='OUT' AND reason IN ('SPOILAGE','MISHANDLING')
-       FOR UPDATE`,
-      [lossId]
-    );
-    const loss = lossRes.rows[0];
-    if (!loss) {
-      await client.query("ROLLBACK");
-      return res.status(404).json({ error: "Loss record not found" });
+    const qty = toNumber(req.body.qty, NaN);
+    if (!isPositive(qty)) return res.status(400).json({ error: "qty must be > 0" });
+
+    const reason = String(req.body.reason || "").trim().toUpperCase();
+    if (!["SPOILAGE", "MISHANDLING"].includes(reason)) {
+      return res.status(400).json({ error: "reason must be SPOILAGE or MISHANDLING" });
     }
 
-    const productId = Number(loss.product_id);
-    const qtyOld = Number(loss.qty) || 0;
+    const note = String(req.body.note || "").trim();
 
-    // lock product
-    const pRes = await client.query(`SELECT id, qty FROM products WHERE id=$1 FOR UPDATE`, [productId]);
-    const p = pRes.rows[0];
-    if (!p) {
-      await client.query("ROLLBACK");
-      return res.status(404).json({ error: "Product not found for this loss" });
-    }
-
-    const currentQty = Number(p.qty) || 0;
-    const delta = qtyNew - qtyOld; // + means increasing loss (more stock out)
-
-    if (delta > 0 && currentQty - delta < 0) {
-      await client.query("ROLLBACK");
-      return res.status(400).json({ error: "Insufficient stock to increase loss qty" });
-    }
-
-    // adjust product qty: loss reduces stock, so increasing loss reduces product qty more
-    const newProductQty = currentQty - delta;
-    await client.query(`UPDATE products SET qty=$1, updated_at=NOW() WHERE id=$2`, [newProductQty, productId]);
-
-    // update loss row
-    const upd = await client.query(
-      `UPDATE stock_movements
-       SET qty=$1, reason=$2, note=$3
-       WHERE id=$4
-       RETURNING id, product_id, type, qty, reason, note, created_at`,
-      [qtyNew, reasonNew, noteNew, lossId]
+    const { rows } = await pool.query(
+      `
+      UPDATE losses
+      SET qty=$1, reason=$2, note=$3
+      WHERE id=$4
+      RETURNING *
+      `,
+      [qty, reason, note, id]
     );
 
-    await client.query("COMMIT");
-    res.json({ ok: true, loss: upd.rows[0] });
+    if (!rows.length) return res.status(404).json({ error: "Loss not found" });
+    res.json(rows[0]);
   } catch (e) {
-    await client.query("ROLLBACK");
-    res.status(500).json({ error: e.message || "Failed to update loss record" });
-  } finally {
-    client.release();
+    console.error("PUT /losses/:id error:", e);
+    res.status(500).json({ error: "Failed to update loss" });
   }
 });
 
-// Delete loss record (restore product qty safely)
+/**
+ * DELETE loss
+ */
 router.delete("/losses/:id", async (req, res) => {
-  const lossId = toNumber(req.params.id);
-  if (!lossId) return res.status(400).json({ error: "Invalid loss id" });
-
-  const client = await pool.connect();
   try {
-    await client.query("BEGIN");
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ error: "Invalid loss id" });
 
-    const lossRes = await client.query(
-      `SELECT id, product_id, qty
-       FROM stock_movements
-       WHERE id=$1 AND type='OUT' AND reason IN ('SPOILAGE','MISHANDLING')
-       FOR UPDATE`,
-      [lossId]
-    );
-    const loss = lossRes.rows[0];
-    if (!loss) {
-      await client.query("ROLLBACK");
-      return res.status(404).json({ error: "Loss record not found" });
-    }
+    const { rowCount } = await pool.query(`DELETE FROM losses WHERE id=$1`, [id]);
+    if (!rowCount) return res.status(404).json({ error: "Loss not found" });
 
-    const productId = Number(loss.product_id);
-    const qtyOld = Number(loss.qty) || 0;
-
-    const pRes = await client.query(`SELECT id, qty FROM products WHERE id=$1 FOR UPDATE`, [productId]);
-    const p = pRes.rows[0];
-    if (!p) {
-      await client.query("ROLLBACK");
-      return res.status(404).json({ error: "Product not found for this loss" });
-    }
-
-    const currentQty = Number(p.qty) || 0;
-    const restoredQty = currentQty + qtyOld;
-
-    await client.query(`UPDATE products SET qty=$1, updated_at=NOW() WHERE id=$2`, [restoredQty, productId]);
-    await client.query(`DELETE FROM stock_movements WHERE id=$1`, [lossId]);
-
-    await client.query("COMMIT");
     res.json({ ok: true });
   } catch (e) {
-    await client.query("ROLLBACK");
-    res.status(500).json({ error: e.message || "Failed to delete loss record" });
-  } finally {
-    client.release();
+    console.error("DELETE /losses/:id error:", e);
+    res.status(500).json({ error: "Failed to delete loss" });
   }
 });
 
-// Export loss history CSV (NEW)
-router.get("/export/losses.csv", async (req, res) => {
-  try {
-    const rows = await all(
-      `SELECT sm.id, sm.product_id, p.name AS product_name, p.unit AS product_unit,
-              sm.qty, sm.reason, sm.note, sm.created_at
-       FROM stock_movements sm
-       JOIN products p ON p.id = sm.product_id
-       WHERE sm.type='OUT' AND sm.reason IN ('SPOILAGE','MISHANDLING')
-       ORDER BY sm.created_at DESC, sm.id DESC`
-    );
-
-    const csv = buildLossCsv(rows);
-    res.setHeader("Content-Type", "text/csv; charset=utf-8");
-    res.setHeader("Content-Disposition", `attachment; filename="loss-history-${new Date().toISOString().slice(0,10)}.csv"`);
-    res.send(csv);
-  } catch (e) {
-    res.status(500).json({ error: e.message || "Failed to export loss history CSV" });
-  }
-});
-
-/** ---------------------------
- * EXPORT / EMAIL INVENTORY
- * --------------------------*/
-
-// Export inventory CSV
+/**
+ * EXPORT inventory CSV
+ * GET /export/inventory.csv
+ */
 router.get("/export/inventory.csv", async (req, res) => {
   try {
-    const rows = await all(
-      `SELECT id, name, sku, unit, qty, reorder_level, updated_at
-       FROM products
-       ORDER BY updated_at DESC, id DESC`
-    );
+    const { rows } = await pool.query(`
+      SELECT
+        id, name, sku, unit, qty, reorder_level,
+        COALESCE(UPPER(category), 'KITCHEN') AS category,
+        portion_size,
+        updated_at
+      FROM products
+      ORDER BY updated_at DESC NULLS LAST, id DESC
+    `);
 
-    const csv = buildInventoryCsv(rows);
+    let csv = "";
+    csv += "Inventory Export\n";
+    csv += `Generated On,${new Date().toLocaleString()}\n\n`;
+    csv += "Category,Name,SKU,Qty,Unit,PortionSize,Reorder,UpdatedAt\n";
+
+    for (const p of rows) {
+      csv += [
+        csvEscape(p.category || "KITCHEN"),
+        csvEscape(p.name),
+        csvEscape(p.sku || ""),
+        csvEscape(p.qty ?? 0),
+        csvEscape(p.unit || ""),
+        csvEscape(p.portion_size ?? ""),
+        csvEscape(p.reorder_level ?? 0),
+        csvEscape(p.updated_at ? new Date(p.updated_at).toLocaleString() : "")
+      ].join(",") + "\n";
+    }
+
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
     res.setHeader("Content-Disposition", `attachment; filename="inventory-${new Date().toISOString().slice(0,10)}.csv"`);
     res.send(csv);
   } catch (e) {
-    res.status(500).json({ error: e.message || "Failed to export inventory CSV" });
+    console.error("GET /export/inventory.csv error:", e);
+    res.status(500).json({ error: "Failed to export inventory CSV" });
   }
 });
 
-// Email inventory CSV (SMTP)
+/**
+ * EMAIL inventory CSV (optional)
+ * POST /email/inventory
+ * Body: { to }
+ *
+ * If SMTP env vars are missing, return "EMAIL NOT CONFIGURED"
+ * so frontend can use Easy mode fallback.
+ */
 router.post("/email/inventory", async (req, res) => {
   try {
-    const to = cleanStr(req.body?.to);
+    const to = String(req.body.to || "").trim();
     if (!to) return res.status(400).json({ error: "Recipient email is required" });
 
-    const rows = await all(
-      `SELECT id, name, sku, unit, qty, reorder_level, updated_at
-       FROM products
-       ORDER BY updated_at DESC, id DESC`
-    );
+    const SMTP_HOST = process.env.SMTP_HOST;
+    const SMTP_PORT = process.env.SMTP_PORT;
+    const SMTP_USER = process.env.SMTP_USER;
+    const SMTP_PASS = process.env.SMTP_PASS;
+    const SMTP_FROM = process.env.SMTP_FROM;
 
-    const csv = buildInventoryCsv(rows);
-    const filename = `inventory-${new Date().toISOString().slice(0,10)}.csv`;
+    if (!SMTP_HOST || !SMTP_PORT || !SMTP_USER || !SMTP_PASS || !SMTP_FROM) {
+      return res.status(400).json({ error: "EMAIL NOT CONFIGURED" });
+    }
 
-    await sendMailWithAttachment({
-      to,
-      subject: "Inventory Report (CSV)",
-      text: "Attached is your inventory report in CSV format.",
-      filename,
-      content: csv,
-      contentType: "text/csv"
+    let nodemailer;
+    try {
+      nodemailer = require("nodemailer");
+    } catch {
+      return res.status(400).json({ error: "EMAIL NOT CONFIGURED" });
+    }
+
+    const { rows } = await pool.query(`
+      SELECT
+        name, sku, unit, qty, reorder_level,
+        COALESCE(UPPER(category), 'KITCHEN') AS category,
+        portion_size,
+        updated_at
+      FROM products
+      ORDER BY updated_at DESC NULLS LAST, name ASC
+    `);
+
+    let csv = "Category,Name,SKU,Qty,Unit,PortionSize,Reorder,UpdatedAt\n";
+    for (const p of rows) {
+      csv += [
+        csvEscape(p.category || "KITCHEN"),
+        csvEscape(p.name),
+        csvEscape(p.sku || ""),
+        csvEscape(p.qty ?? 0),
+        csvEscape(p.unit || ""),
+        csvEscape(p.portion_size ?? ""),
+        csvEscape(p.reorder_level ?? 0),
+        csvEscape(p.updated_at ? new Date(p.updated_at).toLocaleString() : "")
+      ].join(",") + "\n";
+    }
+
+    const transporter = nodemailer.createTransport({
+      host: SMTP_HOST,
+      port: Number(SMTP_PORT),
+      secure: Number(SMTP_PORT) === 465,
+      auth: { user: SMTP_USER, pass: SMTP_PASS }
     });
 
-    res.json({ ok: true });
+    await transporter.sendMail({
+      from: SMTP_FROM,
+      to,
+      subject: "Inventory Report - SeaBite Tracker",
+      text: "Attached is your Inventory CSV report.",
+      attachments: [
+        {
+          filename: `inventory-${new Date().toISOString().slice(0,10)}.csv`,
+          content: csv,
+          contentType: "text/csv"
+        }
+      ]
+    });
+
+    res.json({ ok: true, sent: true });
   } catch (e) {
-    res.status(500).json({ error: e.message || "Failed to send inventory email" });
+    console.error("POST /email/inventory error:", e);
+    res.status(500).json({ error: "Failed to send inventory email" });
   }
 });
 

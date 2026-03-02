@@ -8,30 +8,33 @@ const { pool } = require("./db");
 
 // Routes
 const financeRoutes = require("./routes/finance");
-const inventoryRoutes = require("./routes/inventory"); // <-- must exist in your project
+const inventoryRoutes = require("./routes/inventory");
 
 const app = express();
 
 /**
  * -----------------------
- * CORS (IMPORTANT FIX)
+ * CORS
  * -----------------------
- * This fixes "Network error: Backend unreachable" when calling POST /api/admin/reset
- * from your frontend domain (because browser preflight OPTIONS was blocked).
+ * Allows your frontend to call backend safely (including preflight OPTIONS)
  */
 function buildAllowedOrigins() {
   const set = new Set();
 
-  // allow env list: comma-separated
+  // Allow env list: comma-separated
   const env = String(process.env.FRONTEND_ORIGIN || "").trim();
   if (env) {
-    env.split(",").map(s => s.trim()).filter(Boolean).forEach(o => set.add(o));
+    env
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .forEach((o) => set.add(o));
   }
 
-  // common Render static site domains (add yours)
+  // Common Render static site domains (add yours if needed)
   set.add("https://sea-bite-express-1.onrender.com");
 
-  // allow local dev
+  // Local dev
   set.add("http://localhost:3000");
   set.add("http://localhost:5500");
   set.add("http://127.0.0.1:5500");
@@ -42,27 +45,27 @@ function buildAllowedOrigins() {
 
 const allowedOrigins = buildAllowedOrigins();
 
-app.use(
-  cors({
-    origin: (origin, cb) => {
-      // allow same-origin / curl / server-to-server (no Origin header)
-      if (!origin) return cb(null, true);
+const corsOptions = {
+  origin: (origin, cb) => {
+    // allow same-origin / curl / server-to-server (no Origin header)
+    if (!origin) return cb(null, true);
 
-      if (allowedOrigins.includes(origin)) return cb(null, true);
+    if (allowedOrigins.includes(origin)) return cb(null, true);
 
-      // optional: allow any *.onrender.com frontend
-      if (/^https:\/\/.*\.onrender\.com$/.test(origin)) return cb(null, true);
+    // optional: allow any *.onrender.com frontend
+    if (/^https:\/\/.*\.onrender\.com$/.test(origin)) return cb(null, true);
 
-      return cb(new Error(`CORS blocked for origin: ${origin}`));
-    },
-    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization", "x-admin-reset-token"],
-    maxAge: 86400,
-  })
-);
+    return cb(new Error(`CORS blocked for origin: ${origin}`));
+  },
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization", "x-admin-reset-token"],
+  maxAge: 86400,
+};
 
-// IMPORTANT: respond to preflight
-app.options("*", cors());
+app.use(cors(corsOptions));
+
+// IMPORTANT: respond to preflight using same cors options
+app.options("*", cors(corsOptions));
 
 /**
  * Body parsing
@@ -118,24 +121,23 @@ function readResetToken(req) {
 app.post("/api/admin/reset", async (req, res) => {
   try {
     // ---- AUTH ----
-    const provided =
-      String(req.body?.token || "").trim() ||
-      String(req.headers["x-admin-reset-token"] || "").trim();
-
+    const provided = readResetToken(req);
     const expected = String(process.env.ADMIN_RESET_TOKEN || "").trim();
+
     if (!expected) {
       return res.status(500).json({ error: "ADMIN_RESET_TOKEN not set on server" });
     }
-    if (provided !== expected) {
+
+    if (!provided || provided !== expected) {
       return res.status(401).json({ error: "Unauthorized" });
     }
 
-    const RESET_IMPL_VERSION = "reset-safe-final-v4";
+    const RESET_IMPL_VERSION = "reset-safe-final-v5";
 
     /**
-     * 🔑 KEY FIX:
-     * Only truncate REAL TABLES (relkind = 'r')
-     * Views (v) are ignored automatically
+     * ✅ SAFE RESET:
+     * Only truncate tables that exist in public schema.
+     * (Views won't appear in pg_tables, so they are ignored automatically.)
      */
     const tableQuery = `
       SELECT tablename
@@ -144,9 +146,9 @@ app.post("/api/admin/reset", async (req, res) => {
     `;
 
     const { rows } = await pool.query(tableQuery);
-    const existingTables = new Set(rows.map(r => r.tablename));
+    const existingTables = new Set(rows.map((r) => r.tablename));
 
-    // Desired logical tables (names your app ever used)
+    // Tables used by the app (add/remove as your schema changes)
     const wanted = [
       "sales",
       "sale_items",
@@ -154,7 +156,7 @@ app.post("/api/admin/reset", async (req, res) => {
       "products",
       "stock_movements",
       "losses",
-      "inventory_losses", // ← safe now (will be skipped)
+      "inventory_losses", // safe: will be skipped if it doesn't exist
     ];
 
     const truncated = [];
@@ -162,9 +164,7 @@ app.post("/api/admin/reset", async (req, res) => {
     for (const name of wanted) {
       if (!existingTables.has(name)) continue;
 
-      await pool.query(
-        `TRUNCATE TABLE "${name}" RESTART IDENTITY CASCADE`
-      );
+      await pool.query(`TRUNCATE TABLE "${name}" RESTART IDENTITY CASCADE`);
       truncated.push(name);
     }
 
@@ -172,7 +172,7 @@ app.post("/api/admin/reset", async (req, res) => {
       ok: true,
       RESET_IMPL_VERSION,
       truncated,
-      skipped: wanted.filter(t => !existingTables.has(t)),
+      skipped: wanted.filter((t) => !existingTables.has(t)),
     });
   } catch (err) {
     console.error("ADMIN RESET ERROR:", err);
@@ -181,6 +181,7 @@ app.post("/api/admin/reset", async (req, res) => {
     });
   }
 });
+
 /**
  * API routes
  */

@@ -136,12 +136,37 @@
   <div class="grid">
     <div class="form-section">
       <h2>Add Product</h2>
+
       <input type="text" id="pName" placeholder="Product name" />
       <input type="text" id="pSku" placeholder="SKU (optional)" />
-      <input type="text" id="pUnit" placeholder="Unit (e.g. pcs, kg)" />
+
+      <!-- Category -->
+      <select id="pCategory">
+        <option value="SEAFOOD">Seafood</option>
+        <option value="KITCHEN">Other Kitchen Food</option>
+      </select>
+
+      <!-- Unit: required for kitchen items -->
+      <input type="text" id="pUnit" placeholder="Unit (Required for Kitchen items e.g. pcs, kg)" />
+
+      <!-- Portion conversion: required for seafood -->
+      <input
+        type="number"
+        id="pPortionSize"
+        placeholder="Qty per 1 Portion (Required for Seafood e.g. 2)"
+        inputmode="decimal"
+      />
+
       <input type="number" id="pReorder" placeholder="Reorder level" inputmode="numeric" />
+
       <button type="button" onclick="addProduct()">Add Product</button>
-      <p class="hint">You’ll be asked for an initial quantity — it will be recorded as Stock IN automatically.</p>
+
+      <p class="hint">
+        <strong>IMPORTANT NOTE:</strong><br/>
+        ✅ If category is <strong>Seafood</strong>, you must enter <strong>Qty per 1 Portion</strong> (example: 1 portion = 2kg → enter 2).<br/>
+        ✅ If category is <strong>Other Kitchen Food</strong>, you must enter a <strong>Unit</strong> (example: pcs, kg, packs).<br/>
+        You’ll be asked for an initial quantity — it will be recorded as Stock IN automatically.
+      </p>
     </div>
 
     <div class="form-section">
@@ -158,13 +183,19 @@
     </div>
   </div>
 
+  <!-- SEAFOOD TABLE -->
+  <div class="section-title">
+    <h2>Seafood Inventory</h2>
+    <p class="muted">Quantity ↔ Portion</p>
+  </div>
+
   <div class="table-wrap">
     <table class="records-table inventory-table">
       <colgroup>
         <col />
         <col style="width: 140px" />
-        <col style="width: 110px" />
-        <col style="width: 100px" />
+        <col style="width: 120px" />
+        <col style="width: 120px" />
         <col style="width: 110px" />
         <col style="width: 420px" />
       </colgroup>
@@ -172,13 +203,43 @@
         <tr>
           <th>Name</th>
           <th>SKU</th>
-          <th>Unit</th>
-          <th>Qty</th>
+          <th>Quantity</th>
+          <th>Portion</th>
           <th>Reorder</th>
           <th class="action-col">Action</th>
         </tr>
       </thead>
-      <tbody id="productsTable"></tbody>
+      <tbody id="seafoodTable"></tbody>
+    </table>
+  </div>
+
+  <!-- KITCHEN TABLE -->
+  <div class="section-title">
+    <h2>Other Kitchen Food Inventory</h2>
+    <p class="muted">Quantity + Unit</p>
+  </div>
+
+  <div class="table-wrap">
+    <table class="records-table inventory-table">
+      <colgroup>
+        <col />
+        <col style="width: 140px" />
+        <col style="width: 120px" />
+        <col style="width: 140px" />
+        <col style="width: 110px" />
+        <col style="width: 420px" />
+      </colgroup>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>SKU</th>
+          <th>Quantity</th>
+          <th>Unit</th>
+          <th>Reorder</th>
+          <th class="action-col">Action</th>
+        </tr>
+      </thead>
+      <tbody id="kitchenTable"></tbody>
     </table>
   </div>
 

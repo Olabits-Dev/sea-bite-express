@@ -74,17 +74,43 @@ h2 { margin: 18px 0 10px; }
   box-shadow: var(--shadow);
 }
 
-input {
+/* Inputs + Selects */
+input,
+select {
   width: 100%;
   padding: 10px;
   margin: 6px 0;
   border-radius: 10px;
   border: 1px solid var(--border);
   outline: none;
+  background: #fff;
+  color: var(--text);
 }
 
-input:focus {
+input:focus,
+select:focus {
   border-color: var(--primary);
+}
+
+/* Make select look consistent across browsers */
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  background-image:
+    linear-gradient(45deg, transparent 50%, #6b7280 50%),
+    linear-gradient(135deg, #6b7280 50%, transparent 50%),
+    linear-gradient(to right, transparent, transparent);
+  background-position:
+    calc(100% - 20px) calc(50% - 3px),
+    calc(100% - 14px) calc(50% - 3px),
+    0 0;
+  background-size:
+    6px 6px,
+    6px 6px,
+    100% 100%;
+  background-repeat: no-repeat;
+  padding-right: 40px;
 }
 
 button {
@@ -136,6 +162,12 @@ button:hover { background: var(--primaryHover); }
   border-right: 1px solid var(--border); /* ✅ column lines */
   text-align: left;
   vertical-align: top;
+  white-space: nowrap; /* keeps columns tidy */
+}
+
+.records-table td:nth-child(3),
+.records-table td:nth-child(4) {
+  white-space: normal; /* allow description + products used wrap */
 }
 
 .records-table th:last-child,
@@ -149,6 +181,10 @@ button:hover { background: var(--primaryHover); }
   position: sticky;
   top: 0;
   z-index: 1;
+}
+
+.records-table tbody tr:hover {
+  background: #f9fafb;
 }
 
 .action-col { text-align: center; }

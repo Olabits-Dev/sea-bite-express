@@ -40,6 +40,33 @@ function formatDateTime(value) {
 function isValidAmount(n) { return Number.isFinite(n) && n > 0; }
 function isValidQty(n) { return Number.isFinite(n) && n > 0; }
 
+function toNumber(v, fallback = 0) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : fallback;
+}
+function cleanStr(v, fallback = "") { return String(v ?? fallback).trim(); }
+
+function normalizeCategory(v) {
+  const s = String(v || "").trim().toUpperCase();
+  if (s === "SEAFOOD") return "SEAFOOD";
+  if (s === "KITCHEN" || s === "OTHER" || s === "OTHER_KITCHEN" || s === "OTHER KITCHEN") return "KITCHEN";
+  return "KITCHEN";
+}
+
+function round2(n) { return Math.round((Number(n) || 0) * 100) / 100; }
+
+// Seafood conversions
+function calcPortionFromQty(qty, portionSize) {
+  const ps = Number(portionSize) || 0;
+  if (ps <= 0) return 0;
+  return qty / ps;
+}
+function calcQtyFromPortion(portion, portionSize) {
+  const ps = Number(portionSize) || 0;
+  if (ps <= 0) return 0;
+  return portion * ps;
+}
+
 /**
  * ✅ FIXED: mailto needs to be triggered directly from a user action.
  * Also adds a fallback when mail client isn't configured.
@@ -48,15 +75,9 @@ function openMailto(to, subject, body) {
   const url = `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
 
   const before = Date.now();
-  try {
-    window.location.href = url;
-  } catch {
-    // ignore
-  }
+  try { window.location.href = url; } catch {}
 
-  // Fallback: if mail client isn't available, offer to copy email content
   setTimeout(() => {
-    // If we're still here, many times mail client didn't open
     const ok = confirm(
       "Your browser/device may not have a default email app configured.\n\n" +
       "Tap OK to copy the email content, then paste it into Gmail/Yahoo app."
@@ -129,9 +150,9 @@ async function setQueueUI() {
  ***********************/
 const DB_NAME = "seabite_offline_db";
 /**
- * ⬇️ bumped to 3 so we can add losses store safely
+ * ⬇️ bumped to 4 because we added new product fields (category/portion_size)
  */
-const DB_VERSION = 3;
+const DB_VERSION = 4;
 
 function openDB() {
   return new Promise((resolve, reject) => {
@@ -143,7 +164,7 @@ function openDB() {
       if (!db.objectStoreNames.contains("sales")) db.createObjectStore("sales", { keyPath: "id" });
       if (!db.objectStoreNames.contains("expenses")) db.createObjectStore("expenses", { keyPath: "id" });
       if (!db.objectStoreNames.contains("products")) db.createObjectStore("products", { keyPath: "id" });
-      if (!db.objectStoreNames.contains("losses")) db.createObjectStore("losses", { keyPath: "id" }); // ✅ NEW
+      if (!db.objectStoreNames.contains("losses")) db.createObjectStore("losses", { keyPath: "id" });
     };
 
     req.onsuccess = () => resolve(req.result);
@@ -259,7 +280,7 @@ let lastReportType = null;
 let sales = [];
 let expenses = [];
 let products = [];
-let losses = [];       // ✅ NEW
+let losses = [];
 let pendingUsage = [];
 
 /***********************
@@ -289,6 +310,24 @@ function updateMiniChart(totalSales, totalExpenses) {
 /***********************
  * LOAD DATA
  ***********************/
+function normalizeProducts(list) {
+  return (list || []).map(p => {
+    const cat = normalizeCategory(p.category);
+    const qty = toNumber(p.qty, 0);
+    const ps = toNumber(p.portion_size, 0);
+    const portion = cat === "SEAFOOD" ? round2(calcPortionFromQty(qty, ps)) : undefined;
+    return {
+      ...p,
+      category: cat,
+      qty,
+      portion_size: ps,
+      portion,
+      unit: p.unit || "pcs",
+      reorder_level: toNumber(p.reorder_level, 0),
+    };
+  });
+}
+
 async function loadAll() {
   setNetUI();
   await setQueueUI();
@@ -297,8 +336,8 @@ async function loadAll() {
     try {
       sales = await api("/api/finance/sales");
       expenses = await api("/api/finance/expenses");
-      products = await api("/api/inventory/products");
-      losses = await api("/api/inventory/losses"); // ✅ NEW
+      products = normalizeProducts(await api("/api/inventory/products"));
+      losses = await api("/api/inventory/losses");
 
       await idbPutMany("sales", sales);
       await idbPutMany("expenses", expenses);
@@ -307,20 +346,20 @@ async function loadAll() {
     } catch {
       sales = await idbGetAll("sales");
       expenses = await idbGetAll("expenses");
-      products = await idbGetAll("products");
+      products = normalizeProducts(await idbGetAll("products"));
       losses = await idbGetAll("losses");
     }
   } else {
     sales = await idbGetAll("sales");
     expenses = await idbGetAll("expenses");
-    products = await idbGetAll("products");
+    products = normalizeProducts(await idbGetAll("products"));
     losses = await idbGetAll("losses");
   }
 
   renderFinanceTable();
-  renderProductsTable();
+  renderProductsTables(); // ✅ NEW (split tables)
   renderUsageSummary();
-  renderLossTable(); // ✅ NEW
+  renderLossTable();
 }
 
 /***********************
@@ -528,13 +567,16 @@ async function addSale() {
     const p = products.find(x => Number(x.id) === Number(it.product_id));
     if (p) {
       p.qty = Number(p.qty) - Number(it.qty_used);
+      if (p.category === "SEAFOOD") {
+        p.portion = round2(calcPortionFromQty(p.qty, p.portion_size));
+      }
       p.updated_at = new Date().toISOString();
       await idbPut("products", p);
     }
   }
 
   renderFinanceTable();
-  renderProductsTable();
+  renderProductsTables();
 
   setVal("saleAmount", "");
   setVal("saleDesc", "");
@@ -556,6 +598,8 @@ async function addSale() {
 
   if (navigator.onLine && !result.ok) {
     alert(`Sale failed: ${result.error}`);
+    await loadAll();
+  } else if (navigator.onLine && result.ok) {
     await loadAll();
   }
 }
@@ -587,6 +631,8 @@ async function addExpense() {
   if (navigator.onLine && !result.ok) {
     alert(`Expense failed: ${result.error}`);
     await loadAll();
+  } else if (navigator.onLine && result.ok) {
+    await loadAll();
   }
 }
 
@@ -607,6 +653,8 @@ async function deleteRecord(id, type) {
     if (navigator.onLine && !result.ok) {
       alert(`Delete failed: ${result.error}`);
       await loadAll();
+    } else if (navigator.onLine && result.ok) {
+      await loadAll();
     }
     return;
   }
@@ -619,10 +667,12 @@ async function deleteRecord(id, type) {
     kind: "expense_delete",
     path: `/api/finance/expenses/${id}`,
     options: { method: "DELETE" }
-  });
+    });
 
   if (navigator.onLine && !result.ok) {
     alert(`Delete failed: ${result.error}`);
+    await loadAll();
+  } else if (navigator.onLine && result.ok) {
     await loadAll();
   }
 }
@@ -655,6 +705,8 @@ async function editRecord(id, type) {
     if (navigator.onLine && !result.ok) {
       alert(`Update failed: ${result.error}`);
       await loadAll();
+    } else if (navigator.onLine && result.ok) {
+      await loadAll();
     }
     return;
   }
@@ -684,6 +736,8 @@ async function editRecord(id, type) {
 
   if (navigator.onLine && !result.ok) {
     alert(`Update failed: ${result.error}`);
+    await loadAll();
+  } else if (navigator.onLine && result.ok) {
     await loadAll();
   }
 }
@@ -728,25 +782,36 @@ function exportCSV() {
 }
 
 /***********************
- * INVENTORY + LOSS
+ * INVENTORY (SEAFOOD + KITCHEN)
  ***********************/
 async function addProduct() {
-  const name = getVal("pName").trim();
-  const sku = getVal("pSku").trim();
-  const unit = getVal("pUnit").trim() || "pcs";
-  const reorder_level = Number(getVal("pReorder")) || 0;
+  const name = cleanStr(getVal("pName"));
+  const sku = cleanStr(getVal("pSku"));
+  const category = normalizeCategory(getVal("pCategory"));
+  const unit = cleanStr(getVal("pUnit")) || "pcs";
+  const reorder_level = toNumber(getVal("pReorder"), 0);
+  const portion_size = toNumber(getVal("pPortionSize"), 0); // qty per 1 portion (seafood only)
 
   if (!name) return alert("Product name is required.");
 
-  const initialQtyRaw = prompt("Initial quantity to Stock IN now?", "0");
+  if (category === "SEAFOOD" && portion_size <= 0) {
+    return alert("Seafood needs 'Qty per 1 Portion' (example: 2).");
+  }
+
+  const initialQtyRaw = prompt("Initial QUANTITY to Stock IN now?", "0");
   if (initialQtyRaw === null) return;
-  const initial_qty = Number(initialQtyRaw);
-  if (initial_qty < 0 || Number.isNaN(initial_qty)) return alert("Initial quantity must be 0 or more.");
+  const initial_qty = toNumber(initialQtyRaw, 0);
+  if (initial_qty < 0) return alert("Initial quantity must be 0 or more.");
 
   const temp = {
     id: `tmp-${Date.now()}`,
-    name, sku, unit,
-    qty: initial_qty || 0,
+    name,
+    sku,
+    category,
+    unit: category === "SEAFOOD" ? (unit || "qty") : unit,
+    qty: initial_qty,
+    portion_size: category === "SEAFOOD" ? portion_size : 0,
+    portion: category === "SEAFOOD" ? round2(calcPortionFromQty(initial_qty, portion_size)) : undefined,
     reorder_level,
     updated_at: new Date().toISOString()
   };
@@ -754,12 +819,13 @@ async function addProduct() {
   products.unshift(temp);
   await idbPut("products", temp);
 
-  renderProductsTable();
+  renderProductsTables();
   renderUsageSummary();
 
   setVal("pName", "");
   setVal("pSku", "");
   setVal("pUnit", "");
+  setVal("pPortionSize", "");
   setVal("pReorder", "");
 
   const result = await apiOrQueue({
@@ -767,12 +833,22 @@ async function addProduct() {
     path: "/api/inventory/products",
     options: {
       method: "POST",
-      body: JSON.stringify({ name, sku, unit, reorder_level, initial_qty })
+      body: JSON.stringify({
+        name,
+        sku,
+        category,
+        unit,
+        reorder_level,
+        initial_qty,
+        portion_size: category === "SEAFOOD" ? portion_size : null
+      })
     }
   });
 
   if (navigator.onLine && !result.ok) {
     alert(`Product create failed: ${result.error}`);
+    await loadAll();
+  } else if (navigator.onLine && result.ok) {
     await loadAll();
   }
 }
@@ -783,27 +859,64 @@ async function editProduct(id) {
 
   const name = prompt("Name:", p.name); if (name === null) return;
   const sku = prompt("SKU:", p.sku || ""); if (sku === null) return;
-  const unit = prompt("Unit:", p.unit || "pcs"); if (unit === null) return;
+
+  const category = normalizeCategory(prompt("Category (SEAFOOD or KITCHEN):", p.category || "KITCHEN"));
+  if (!category) return;
+
+  let unit = p.unit || "pcs";
+  let portion_size = toNumber(p.portion_size, 0);
+
+  if (category === "SEAFOOD") {
+    const ps = prompt("Qty per 1 Portion:", String(portion_size || ""));
+    if (ps === null) return;
+    portion_size = toNumber(ps, 0);
+    if (portion_size <= 0) return alert("Qty per Portion must be > 0 for Seafood.");
+  } else {
+    const u = prompt("Unit:", p.unit || "pcs");
+    if (u === null) return;
+    unit = cleanStr(u) || "pcs";
+    portion_size = 0;
+  }
+
   const reorder = prompt("Reorder level:", p.reorder_level ?? 0); if (reorder === null) return;
 
-  p.name = String(name).trim();
-  p.sku = String(sku).trim();
-  p.unit = String(unit).trim();
-  p.reorder_level = Number(reorder) || 0;
+  p.name = cleanStr(name);
+  p.sku = cleanStr(sku);
+  p.category = category;
+  p.unit = unit;
+  p.portion_size = portion_size;
+  p.reorder_level = toNumber(reorder, 0);
+  if (p.category === "SEAFOOD") {
+    p.portion = round2(calcPortionFromQty(toNumber(p.qty, 0), p.portion_size));
+  } else {
+    p.portion = undefined;
+  }
   p.updated_at = new Date().toISOString();
 
   await idbPut("products", p);
-  renderProductsTable();
+  renderProductsTables();
   renderUsageSummary();
 
   const result = await apiOrQueue({
     kind: "product_update",
     path: `/api/inventory/products/${id}`,
-    options: { method: "PUT", body: JSON.stringify({ name: p.name, sku: p.sku, unit: p.unit, reorder_level: p.reorder_level }) }
+    options: {
+      method: "PUT",
+      body: JSON.stringify({
+        name: p.name,
+        sku: p.sku,
+        category: p.category,
+        unit: p.unit,
+        reorder_level: p.reorder_level,
+        portion_size: p.category === "SEAFOOD" ? p.portion_size : null
+      })
+    }
   });
 
   if (navigator.onLine && !result.ok) {
     alert(`Product update failed: ${result.error}`);
+    await loadAll();
+  } else if (navigator.onLine && result.ok) {
     await loadAll();
   }
 }
@@ -813,10 +926,9 @@ async function deleteProduct(id) {
 
   products = products.filter(x => String(x.id) !== String(id));
   await idbDelete("products", id);
-
   pendingUsage = pendingUsage.filter(x => String(x.product_id) !== String(id));
 
-  renderProductsTable();
+  renderProductsTables();
   renderUsageSummary();
 
   const result = await apiOrQueue({
@@ -828,37 +940,87 @@ async function deleteProduct(id) {
   if (navigator.onLine && !result.ok) {
     alert(`Product delete failed: ${result.error}`);
     await loadAll();
+  } else if (navigator.onLine && result.ok) {
+    await loadAll();
   }
 }
 
+/**
+ * ✅ Stock move:
+ * - Seafood: choose Quantity or Portion; sync both.
+ * - Kitchen: Quantity only.
+ */
 async function stockMove(productId, type) {
   const p = products.find(x => String(x.id) === String(productId));
   if (!p) return alert("Product not found.");
 
-  const qtyRaw = prompt(`Enter quantity to Stock ${type}:`, "1");
-  if (qtyRaw === null) return;
-  const qty = Number(qtyRaw);
-  if (!isValidQty(qty)) return alert("Quantity must be > 0");
-
   const note = prompt("Note (optional):", "") ?? "";
 
-  if (type === "OUT" && Number(p.qty) - qty < 0) return alert("Insufficient stock.");
+  let deltaQty = 0;
+  let label = "";
 
-  p.qty = type === "IN" ? Number(p.qty) + qty : Number(p.qty) - qty;
+  if (p.category === "SEAFOOD") {
+    const mode = prompt("Stock by: QTY or PORTION?", "QTY");
+    if (mode === null) return;
+    const m = String(mode).trim().toUpperCase();
+
+    if (m === "PORTION") {
+      const portionRaw = prompt(`Enter PORTION to Stock ${type}:`, "1");
+      if (portionRaw === null) return;
+      const portion = toNumber(portionRaw, 0);
+      if (!isValidQty(portion)) return alert("Portion must be > 0");
+
+      deltaQty = calcQtyFromPortion(portion, p.portion_size);
+      label = `${round2(portion)} portion`;
+    } else {
+      const qtyRaw = prompt(`Enter QUANTITY to Stock ${type}:`, "1");
+      if (qtyRaw === null) return;
+      const qty = toNumber(qtyRaw, 0);
+      if (!isValidQty(qty)) return alert("Quantity must be > 0");
+
+      deltaQty = qty;
+      label = `${round2(qty)} qty`;
+    }
+  } else {
+    const qtyRaw = prompt(`Enter quantity to Stock ${type}:`, "1");
+    if (qtyRaw === null) return;
+    const qty = toNumber(qtyRaw, 0);
+    if (!isValidQty(qty)) return alert("Quantity must be > 0");
+    deltaQty = qty;
+    label = `${round2(qty)} ${p.unit || ""}`.trim();
+  }
+
+  const nextQty = type === "IN" ? (toNumber(p.qty, 0) + deltaQty) : (toNumber(p.qty, 0) - deltaQty);
+  if (type === "OUT" && nextQty < 0) return alert("Insufficient stock.");
+
+  // optimistic update
+  p.qty = nextQty;
+  if (p.category === "SEAFOOD") {
+    p.portion = round2(calcPortionFromQty(p.qty, p.portion_size));
+  }
   p.updated_at = new Date().toISOString();
   await idbPut("products", p);
 
-  renderProductsTable();
+  renderProductsTables();
   renderUsageSummary();
 
   const result = await apiOrQueue({
     kind: "stock_move",
     path: `/api/inventory/products/${productId}/move`,
-    options: { method: "POST", body: JSON.stringify({ type, qty, note }) }
+    options: {
+      method: "POST",
+      body: JSON.stringify({
+        type,
+        qty: deltaQty,
+        note: note ? `${note} (${label})` : `(${label})`
+      })
+    }
   });
 
   if (navigator.onLine && !result.ok) {
     alert(`Stock move failed: ${result.error}`);
+    await loadAll();
+  } else if (navigator.onLine && result.ok) {
     await loadAll();
   }
 }
@@ -867,21 +1029,43 @@ async function recordLoss(productId, reason) {
   const p = products.find(x => String(x.id) === String(productId));
   if (!p) return alert("Product not found.");
 
-  const qtyRaw = prompt(`Enter quantity for ${reason}:`, "1");
-  if (qtyRaw === null) return;
-  const qty = Number(qtyRaw);
-  if (!isValidQty(qty)) return alert("Quantity must be > 0");
+  let qty = 0;
+
+  if (p.category === "SEAFOOD") {
+    const mode = prompt("Loss by: QTY or PORTION?", "QTY");
+    if (mode === null) return;
+    const m = String(mode).trim().toUpperCase();
+
+    if (m === "PORTION") {
+      const portionRaw = prompt(`Enter PORTION for ${reason}:`, "1");
+      if (portionRaw === null) return;
+      const portion = toNumber(portionRaw, 0);
+      if (!isValidQty(portion)) return alert("Portion must be > 0");
+      qty = calcQtyFromPortion(portion, p.portion_size);
+    } else {
+      const qtyRaw = prompt(`Enter QUANTITY for ${reason}:`, "1");
+      if (qtyRaw === null) return;
+      qty = toNumber(qtyRaw, 0);
+      if (!isValidQty(qty)) return alert("Quantity must be > 0");
+    }
+  } else {
+    const qtyRaw = prompt(`Enter quantity for ${reason}:`, "1");
+    if (qtyRaw === null) return;
+    qty = toNumber(qtyRaw, 0);
+    if (!isValidQty(qty)) return alert("Quantity must be > 0");
+  }
 
   const note = prompt("Note (optional):", "") ?? "";
 
-  if (Number(p.qty) - qty < 0) return alert("Insufficient stock.");
+  if (toNumber(p.qty, 0) - qty < 0) return alert("Insufficient stock.");
 
   // optimistic product update
-  p.qty = Number(p.qty) - qty;
+  p.qty = toNumber(p.qty, 0) - qty;
+  if (p.category === "SEAFOOD") p.portion = round2(calcPortionFromQty(p.qty, p.portion_size));
   p.updated_at = new Date().toISOString();
   await idbPut("products", p);
 
-  // ✅ optimistic loss entry (offline safe)
+  // optimistic loss entry
   const tmpLoss = {
     id: `tmp-${Date.now()}`,
     product_id: Number(productId),
@@ -895,7 +1079,7 @@ async function recordLoss(productId, reason) {
   losses.unshift(tmpLoss);
   await idbPut("losses", tmpLoss);
 
-  renderProductsTable();
+  renderProductsTables();
   renderUsageSummary();
   renderLossTable();
 
@@ -909,13 +1093,12 @@ async function recordLoss(productId, reason) {
     alert(`Loss record failed: ${result.error}`);
     await loadAll();
   } else if (navigator.onLine && result.ok) {
-    // refresh to replace tmp id with real id
     await loadAll();
   }
 }
 
 /***********************
- * LOSS HISTORY TABLE (NEW)
+ * LOSS HISTORY TABLE
  ***********************/
 function renderLossTable() {
   const tbody = $("lossTable");
@@ -940,7 +1123,7 @@ function renderLossTable() {
     tbody.innerHTML += `
       <tr>
         <td>${escapeHtml(productName)}</td>
-        <td>${qty}</td>
+        <td>${round2(qty)}</td>
         <td>${escapeHtml(unit)}</td>
         <td>${escapeHtml(reason)}</td>
         <td>${formatDateTime(date)}</td>
@@ -965,7 +1148,7 @@ async function editLoss(lossId) {
   const newReasonRaw = prompt("Edit reason (SPOILAGE or MISHANDLING):", String(rec.reason || "").toUpperCase());
   if (newReasonRaw === null) return;
 
-  const qty = Number(newQtyRaw);
+  const qty = toNumber(newQtyRaw, 0);
   const reason = String(newReasonRaw).trim().toUpperCase();
 
   if (!isValidQty(qty)) return alert("Qty must be > 0");
@@ -973,7 +1156,6 @@ async function editLoss(lossId) {
 
   const note = prompt("Edit note (optional):", rec.note || "") ?? (rec.note || "");
 
-  // optimistic update
   rec.qty = qty;
   rec.reason = reason;
   rec.note = note;
@@ -1033,7 +1215,7 @@ function exportLossCSV() {
 
     csv += [
       csvEscape(productName),
-      csvEscape(qty),
+      csvEscape(round2(qty)),
       csvEscape(unit),
       csvEscape(reason),
       csvEscape(date),
@@ -1046,43 +1228,116 @@ function exportLossCSV() {
 }
 
 /***********************
- * PRODUCTS TABLE
+ * RENDER INVENTORY TABLES (SEAFOOD + KITCHEN)
  ***********************/
-function renderProductsTable() {
-  const tbody = $("productsTable");
-  if (!tbody) return;
+function renderProductsTables() {
+  const seafoodBody = $("seafoodTable");
+  const kitchenBody = $("kitchenTable");
 
-  tbody.innerHTML = "";
-  if (!products.length) {
-    tbody.innerHTML = `<tr><td colspan="6">No products yet.</td></tr>`;
-    return;
+  // Backward compatibility (if old html still exists)
+  const legacyBody = $("productsTable");
+
+  const seafood = products.filter(p => normalizeCategory(p.category) === "SEAFOOD");
+  const kitchen = products.filter(p => normalizeCategory(p.category) === "KITCHEN");
+
+  const sortFn = (a, b) => new Date(b.updated_at || 0) - new Date(a.updated_at || 0);
+  seafood.sort(sortFn);
+  kitchen.sort(sortFn);
+
+  if (seafoodBody) {
+    seafoodBody.innerHTML = "";
+    if (!seafood.length) {
+      seafoodBody.innerHTML = `<tr><td colspan="6">No seafood products yet.</td></tr>`;
+    } else {
+      seafood.forEach(p => {
+        const portion = round2(calcPortionFromQty(toNumber(p.qty, 0), toNumber(p.portion_size, 0)));
+        seafoodBody.innerHTML += `
+          <tr>
+            <td>${escapeHtml(p.name)}</td>
+            <td>${escapeHtml(p.sku || "")}</td>
+            <td>${round2(toNumber(p.qty, 0))}</td>
+            <td>${portion}</td>
+            <td>${toNumber(p.reorder_level, 0)}</td>
+            <td>
+              <div class="inv-actions">
+                <button class="in-btn" type="button" onclick="stockMove('${p.id}', 'IN')">Stock IN</button>
+                <button class="out-btn" type="button" onclick="stockMove('${p.id}', 'OUT')">Stock OUT</button>
+                <button class="warn-btn" type="button" onclick="recordLoss('${p.id}', 'SPOILAGE')">Spoilage</button>
+                <button class="warn-btn" type="button" onclick="recordLoss('${p.id}', 'MISHANDLING')">Mishandling</button>
+                <button class="edit-btn" type="button" onclick="editProduct('${p.id}')">Edit</button>
+                <button class="delete-btn" type="button" onclick="deleteProduct('${p.id}')">Delete</button>
+              </div>
+            </td>
+          </tr>
+        `;
+      });
+    }
   }
 
-  products.sort((a, b) => new Date(b.updated_at || 0) - new Date(a.updated_at || 0));
+  if (kitchenBody) {
+    kitchenBody.innerHTML = "";
+    if (!kitchen.length) {
+      kitchenBody.innerHTML = `<tr><td colspan="6">No kitchen products yet.</td></tr>`;
+    } else {
+      kitchen.forEach(p => {
+        kitchenBody.innerHTML += `
+          <tr>
+            <td>${escapeHtml(p.name)}</td>
+            <td>${escapeHtml(p.sku || "")}</td>
+            <td>${round2(toNumber(p.qty, 0))}</td>
+            <td>${escapeHtml(p.unit || "pcs")}</td>
+            <td>${toNumber(p.reorder_level, 0)}</td>
+            <td>
+              <div class="inv-actions">
+                <button class="in-btn" type="button" onclick="stockMove('${p.id}', 'IN')">Stock IN</button>
+                <button class="out-btn" type="button" onclick="stockMove('${p.id}', 'OUT')">Stock OUT</button>
+                <button class="warn-btn" type="button" onclick="recordLoss('${p.id}', 'SPOILAGE')">Spoilage</button>
+                <button class="warn-btn" type="button" onclick="recordLoss('${p.id}', 'MISHANDLING')">Mishandling</button>
+                <button class="edit-btn" type="button" onclick="editProduct('${p.id}')">Edit</button>
+                <button class="delete-btn" type="button" onclick="deleteProduct('${p.id}')">Delete</button>
+              </div>
+            </td>
+          </tr>
+        `;
+      });
+    }
+  }
 
-  products.forEach(p => {
-    tbody.innerHTML += `
-      <tr>
-        <td>${escapeHtml(p.name)}</td>
-        <td>${escapeHtml(p.sku || "")}</td>
-        <td>${escapeHtml(p.unit || "pcs")}</td>
-        <td>${p.qty}</td>
-        <td>${p.reorder_level || 0}</td>
-        <td>
-          <div class="inv-actions">
-            <button class="in-btn" type="button" onclick="stockMove('${p.id}', 'IN')">Stock IN</button>
-            <button class="out-btn" type="button" onclick="stockMove('${p.id}', 'OUT')">Stock OUT</button>
-            <button class="warn-btn" type="button" onclick="recordLoss('${p.id}', 'SPOILAGE')">Spoilage</button>
-            <button class="warn-btn" type="button" onclick="recordLoss('${p.id}', 'MISHANDLING')">Mishandling</button>
-            <button class="edit-btn" type="button" onclick="editProduct('${p.id}')">Edit</button>
-            <button class="delete-btn" type="button" onclick="deleteProduct('${p.id}')">Delete</button>
-          </div>
-        </td>
-      </tr>
-    `;
-  });
+  // If user still loads old HTML that uses #productsTable, render kitchen+seafood combined there too.
+  if (legacyBody && !seafoodBody && !kitchenBody) {
+    legacyBody.innerHTML = "";
+    if (!products.length) {
+      legacyBody.innerHTML = `<tr><td colspan="6">No products yet.</td></tr>`;
+      return;
+    }
+    products.sort(sortFn);
+    products.forEach(p => {
+      legacyBody.innerHTML += `
+        <tr>
+          <td>${escapeHtml(p.name)}</td>
+          <td>${escapeHtml(p.sku || "")}</td>
+          <td>${escapeHtml(p.unit || "pcs")}</td>
+          <td>${round2(toNumber(p.qty, 0))}</td>
+          <td>${toNumber(p.reorder_level, 0)}</td>
+          <td>
+            <div class="inv-actions">
+              <button class="in-btn" type="button" onclick="stockMove('${p.id}', 'IN')">Stock IN</button>
+              <button class="out-btn" type="button" onclick="stockMove('${p.id}', 'OUT')">Stock OUT</button>
+              <button class="warn-btn" type="button" onclick="recordLoss('${p.id}', 'SPOILAGE')">Spoilage</button>
+              <button class="warn-btn" type="button" onclick="recordLoss('${p.id}', 'MISHANDLING')">Mishandling</button>
+              <button class="edit-btn" type="button" onclick="editProduct('${p.id}')">Edit</button>
+              <button class="delete-btn" type="button" onclick="deleteProduct('${p.id}')">Delete</button>
+            </div>
+          </td>
+        </tr>
+      `;
+    });
+  }
 }
 
+/***********************
+ * INVENTORY EXPORT/EMAIL
+ ***********************/
 function downloadInventoryCSV() {
   if (!navigator.onLine) return alert("You must be online to export server CSV.");
   window.open(`${API_BASE}/api/inventory/export/inventory.csv`, "_blank");
@@ -1122,7 +1377,6 @@ async function emailInventoryCSV() {
 
 /**
  * ✅ FIXED: mailto first (must be direct click), then CSV download after a delay.
- * This avoids popup blockers preventing the mail app.
  */
 async function emailInventoryEasy() {
   const to = getVal("invEmail").trim();
@@ -1147,10 +1401,8 @@ Generated: ${new Date().toLocaleString()}
 
 Regards.`;
 
-  // ✅ 1) Trigger email app first
   openMailto(to, "Inventory Report - SeaBite Tracker", body);
 
-  // ✅ 2) Then open/download CSV after a short delay
   if (navigator.onLine) {
     setTimeout(() => {
       window.open(csvUrl, "_blank");
@@ -1202,12 +1454,10 @@ function initAdminReset() {
 
   if (!panel || !btn || !tokenInput) return;
 
-  // show panel if user focuses / types token
   tokenInput.addEventListener("input", () => {
     panel.style.display = "block";
   });
 
-  // also show panel always on desktop (optional)
   panel.style.display = "block";
 
   btn.addEventListener("click", async () => {
@@ -1224,7 +1474,8 @@ function initAdminReset() {
     try {
       const resp = await api("/api/admin/reset", {
         method: "POST",
-        headers: {"x-admin-reset-token": token, 
+        headers: {
+          "x-admin-reset-token": token,
           "Authorization": `Bearer ${token}`
         },
         body: JSON.stringify({ token })
@@ -1232,13 +1483,12 @@ function initAdminReset() {
 
       if (status) status.textContent = `✅ Reset done: ${JSON.stringify(resp)}`;
 
-      // clear local caches too
+      // clear local caches too (best effort)
       await idbPutMany("sales", []);
       await idbPutMany("expenses", []);
       await idbPutMany("products", []);
       await idbPutMany("losses", []);
 
-      // reload fresh from server
       await loadAll();
       alert("✅ Database reset completed.");
     } catch (e) {
