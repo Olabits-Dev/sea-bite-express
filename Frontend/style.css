@@ -103,13 +103,8 @@ button {
 
 button:hover { background: var(--primaryHover); }
 
-/* ✅ Admin reset button */
-.danger-solid {
-  background: var(--danger);
-}
-.danger-solid:hover {
-  background: var(--dangerHover);
-}
+.danger-solid { background: var(--danger); }
+.danger-solid:hover { background: var(--dangerHover); }
 
 .secondary-btn { background: #111827; }
 .secondary-btn:hover { background: #0b1220; }
@@ -120,19 +115,26 @@ button:hover { background: var(--primaryHover); }
   gap: 10px;
 }
 
+/* ✅ Records table wrap (horizontal swipe on small screens) */
 .table-wrap {
   width: 100%;
   overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
   border-radius: var(--radius);
   box-shadow: var(--shadow);
   background: var(--card);
   margin-top: 10px;
 }
 
+/* optional: show scrollbar nicely on desktop */
+.table-wrap::-webkit-scrollbar { height: 10px; }
+.table-wrap::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 999px; }
+.table-wrap::-webkit-scrollbar-track { background: #f3f4f6; border-radius: 999px; }
+
 .records-table {
   width: 100%;
   border-collapse: collapse;
-  min-width: 900px;
+  min-width: 900px; /* keeps table wide so mobile can scroll */
 }
 
 .records-table th,
@@ -141,11 +143,12 @@ button:hover { background: var(--primaryHover); }
   border-bottom: 1px solid var(--border);
   text-align: left;
   vertical-align: top;
+  white-space: nowrap; /* ✅ prevents vertical stacking */
 }
 
 .records-table th + th,
 .records-table td + td {
-  border-left: 1px solid var(--border);
+  border-left: 1px solid var(--border); /* ✅ column lines */
 }
 
 .records-table thead th {
@@ -194,14 +197,17 @@ button:hover { background: var(--primaryHover); }
   border-radius: 9px;
   margin: 0;
   line-height: 1.1;
+  white-space: nowrap;
 }
 
+/* Usage summary */
 .usage-summary {
   font-size: 0.92rem;
   color: var(--muted);
   margin: 10px 0 0;
 }
 
+/* Section title */
 .section-title {
   display: flex;
   align-items: baseline;
@@ -210,6 +216,7 @@ button:hover { background: var(--primaryHover); }
   margin-top: 18px;
 }
 
+/* Mini chart */
 .mini-chart {
   margin-top: 14px;
   padding: 14px;
@@ -257,6 +264,7 @@ button:hover { background: var(--primaryHover); }
 
 .mini-bar-value { text-align: right; color: #111827; }
 
+/* Modal */
 .modal {
   position: fixed;
   inset: 0;
@@ -331,64 +339,23 @@ button:hover { background: var(--primaryHover); }
   border-top: 1px solid var(--border);
 }
 
+/* Status */
 .status {
   margin-top: 10px;
   color: var(--muted);
   word-break: break-word;
 }
 
+/* MOBILE */
 @media (max-width: 900px) {
   body { padding: 14px; }
   .grid { grid-template-columns: 1fr; }
-  .records-table { min-width: 720px; }
+  .records-table { min-width: 820px; } /* still scrollable */
   .mini-bar-row { grid-template-columns: 70px 1fr 120px; }
 }
 
-@media (max-width: 620px) {
-  .records-table.mobile-cards {
-    min-width: 0;
-    border-collapse: separate;
-    border-spacing: 0 10px;
-  }
-
-  .records-table.mobile-cards thead { display: none; }
-
-  .records-table.mobile-cards tbody,
-  .records-table.mobile-cards tr,
-  .records-table.mobile-cards td {
-    display: block;
-    width: 100%;
-  }
-
-  .records-table.mobile-cards tr {
-    background: #fff;
-    border: 1px solid var(--border);
-    border-radius: 14px;
-    box-shadow: 0 6px 18px rgba(0,0,0,0.06);
-    overflow: hidden;
-  }
-
-  .records-table.mobile-cards td {
-    border: none;
-    border-bottom: 1px solid var(--border);
-    padding: 10px 12px;
-    display: flex;
-    gap: 10px;
-    justify-content: space-between;
-    align-items: flex-start;
-  }
-
-  .records-table.mobile-cards td:last-child { border-bottom: none; }
-  .records-table.mobile-cards td + td { border-left: none; }
-
-  .records-table.mobile-cards td::before {
-    content: attr(data-label);
-    font-weight: 700;
-    color: #111827;
-    max-width: 45%;
-  }
-
-  .action-buttons, .inv-actions { justify-content: flex-start; }
+@media (max-width: 520px) {
+  .records-table { min-width: 780px; } /* swipe */
   button { width: 100%; }
   .report-actions button { width: auto; }
 }
