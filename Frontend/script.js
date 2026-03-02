@@ -214,6 +214,43 @@ async function idbDelete(store, key) {
 }
 
 /***********************
+ * ✅ HARD CLEAR HELPERS (FIXES “RESET BUT OLD DATA STILL SHOWS”)
+ ***********************/
+async function idbClear(store) {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(store, "readwrite");
+    const req = tx.objectStore(store).clear();
+    req.onsuccess = () => resolve(true);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function hardClearOfflineData() {
+  // 1) Clear all IDB stores (including queue)
+  const stores = ["queue", "sales", "expenses", "products", "losses"];
+  for (const s of stores) {
+    try { await idbClear(s); } catch {}
+  }
+
+  // 2) Clear Cache Storage (if you have a Service Worker / PWA caching)
+  if ("caches" in window) {
+    try {
+      const keys = await caches.keys();
+      await Promise.all(keys.map((k) => caches.delete(k)));
+    } catch {}
+  }
+
+  // 3) Optional: unregister service workers (prevents stale cached HTML/JS)
+  if ("serviceWorker" in navigator) {
+    try {
+      const regs = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map((r) => r.unregister()));
+    } catch {}
+  }
+}
+
+/***********************
  * Queue
  ***********************/
 async function queueAdd(action) {
@@ -357,7 +394,7 @@ async function loadAll() {
   }
 
   renderFinanceTable();
-  renderProductsTables(); // ✅ NEW (split tables)
+  renderProductsTables(); // ✅ split tables
   renderUsageSummary();
   renderLossTable();
 }
@@ -667,7 +704,7 @@ async function deleteRecord(id, type) {
     kind: "expense_delete",
     path: `/api/finance/expenses/${id}`,
     options: { method: "DELETE" }
-    });
+  });
 
   if (navigator.onLine && !result.ok) {
     alert(`Delete failed: ${result.error}`);
@@ -1303,7 +1340,7 @@ function renderProductsTables() {
     }
   }
 
-  // If user still loads old HTML that uses #productsTable, render kitchen+seafood combined there too.
+  // If user still loads old HTML that uses #productsTable, render combined there too.
   if (legacyBody && !seafoodBody && !kitchenBody) {
     legacyBody.innerHTML = "";
     if (!products.length) {
@@ -1472,6 +1509,7 @@ function initAdminReset() {
     if (status) status.textContent = "Resetting...";
 
     try {
+      // ✅ 1) RESET SERVER DB
       const resp = await api("/api/admin/reset", {
         method: "POST",
         headers: {
@@ -1481,16 +1519,32 @@ function initAdminReset() {
         body: JSON.stringify({ token })
       });
 
+      // ✅ 2) HARD CLEAR OFFLINE CACHE + QUEUE (THIS FIXES OLD DATA STILL SHOWING)
+      await hardClearOfflineData();
+
+      // ✅ 3) CLEAR IN-MEMORY ARRAYS (UI)
+      sales = [];
+      expenses = [];
+      products = [];
+      losses = [];
+      pendingUsage = [];
+      lastReportType = null;
+
+      renderFinanceTable();
+      renderProductsTables();
+      renderLossTable();
+      renderUsageSummary();
+      await setQueueUI();
+
       if (status) status.textContent = `✅ Reset done: ${JSON.stringify(resp)}`;
 
-      // clear local caches too (best effort)
-      await idbPutMany("sales", []);
-      await idbPutMany("expenses", []);
-      await idbPutMany("products", []);
-      await idbPutMany("losses", []);
-
+      // ✅ 4) Reload from server fresh
       await loadAll();
-      alert("✅ Database reset completed.");
+
+      alert("✅ Database reset completed. Offline cache cleared.");
+
+      // Optional: full refresh to ensure fresh assets if SW was active
+      // location.reload();
     } catch (e) {
       const payload = e.data || { error: e.message };
       if (status) status.textContent = `❌ Reset failed: ${JSON.stringify(payload)}`;
