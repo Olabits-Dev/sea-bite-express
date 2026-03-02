@@ -117,51 +117,68 @@ function readResetToken(req) {
 
 app.post("/api/admin/reset", async (req, res) => {
   try {
+    // ---- AUTH ----
     const provided =
-      String(req.headers["x-admin-reset-token"] || "").trim() ||
-      (String(req.headers["authorization"] || "").toLowerCase().startsWith("bearer ")
-        ? String(req.headers["authorization"]).slice(7).trim()
-        : "") ||
-      String(req.body?.token || "").trim();
+      String(req.body?.token || "").trim() ||
+      String(req.headers["x-admin-reset-token"] || "").trim();
 
     const expected = String(process.env.ADMIN_RESET_TOKEN || "").trim();
-
     if (!expected) {
-      return res.status(500).json({ error: "ADMIN_RESET_TOKEN is not set on server" });
+      return res.status(500).json({ error: "ADMIN_RESET_TOKEN not set on server" });
     }
-    if (!provided || provided !== expected) {
+    if (provided !== expected) {
       return res.status(401).json({ error: "Unauthorized" });
     }
 
-    // ✅ Only truncate tables that exist (no more "is not a table" errors)
-    const tables = [
-      "sale_items",
+    const RESET_IMPL_VERSION = "reset-safe-final-v4";
+
+    /**
+     * 🔑 KEY FIX:
+     * Only truncate REAL TABLES (relkind = 'r')
+     * Views (v) are ignored automatically
+     */
+    const tableQuery = `
+      SELECT tablename
+      FROM pg_tables
+      WHERE schemaname = 'public'
+    `;
+
+    const { rows } = await pool.query(tableQuery);
+    const existingTables = new Set(rows.map(r => r.tablename));
+
+    // Desired logical tables (names your app ever used)
+    const wanted = [
       "sales",
+      "sale_items",
       "expenses",
+      "products",
       "stock_movements",
       "losses",
-      "inventory_losses", // keep it here; it will be skipped if it doesn't exist
-      "products",
+      "inventory_losses", // ← safe now (will be skipped)
     ];
 
     const truncated = [];
 
-    for (const t of tables) {
-      const exists = await pool.query("SELECT to_regclass($1) AS reg", [t]);
-      if (exists.rows[0]?.reg) {
-        await pool.query(`TRUNCATE TABLE ${t} RESTART IDENTITY CASCADE`);
-        truncated.push(t);
-      }
+    for (const name of wanted) {
+      if (!existingTables.has(name)) continue;
+
+      await pool.query(
+        `TRUNCATE TABLE "${name}" RESTART IDENTITY CASCADE`
+      );
+      truncated.push(name);
     }
 
     return res.json({
       ok: true,
-      message: "Database reset completed",
+      RESET_IMPL_VERSION,
       truncated,
+      skipped: wanted.filter(t => !existingTables.has(t)),
     });
-  } catch (e) {
-    console.error("RESET ERROR:", e);
-    return res.status(500).json({ error: e.message || "Reset failed" });
+  } catch (err) {
+    console.error("ADMIN RESET ERROR:", err);
+    return res.status(500).json({
+      error: err.message || "Reset failed",
+    });
   }
 });
 /**
