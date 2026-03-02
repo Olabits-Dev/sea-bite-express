@@ -40,9 +40,34 @@ function formatDateTime(value) {
 function isValidAmount(n) { return Number.isFinite(n) && n > 0; }
 function isValidQty(n) { return Number.isFinite(n) && n > 0; }
 
+/**
+ * ✅ FIXED: mailto needs to be triggered directly from a user action.
+ * Also adds a fallback when mail client isn't configured.
+ */
 function openMailto(to, subject, body) {
   const url = `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-  window.location.href = url;
+
+  const before = Date.now();
+  try {
+    window.location.href = url;
+  } catch {
+    // ignore
+  }
+
+  // Fallback: if mail client isn't available, offer to copy email content
+  setTimeout(() => {
+    // If we're still here, many times mail client didn't open
+    const ok = confirm(
+      "Your browser/device may not have a default email app configured.\n\n" +
+      "Tap OK to copy the email content, then paste it into Gmail/Yahoo app."
+    );
+    if (ok) {
+      const text = `To: ${to}\nSubject: ${subject}\n\n${body}`;
+      (navigator.clipboard?.writeText(text) || Promise.resolve())
+        .then(() => alert("✅ Email content copied. Open your email app and paste it."))
+        .catch(() => alert("⚠️ Could not copy automatically. Please manually copy the email text from the page."));
+    }
+  }, Math.max(800, Date.now() - before));
 }
 
 function isNetworkMailError(msg = "") {
@@ -1095,6 +1120,10 @@ async function emailInventoryCSV() {
   }
 }
 
+/**
+ * ✅ FIXED: mailto first (must be direct click), then CSV download after a delay.
+ * This avoids popup blockers preventing the mail app.
+ */
 async function emailInventoryEasy() {
   const to = getVal("invEmail").trim();
   if (!to) return alert("Enter recipient email.");
@@ -1102,23 +1131,34 @@ async function emailInventoryEasy() {
   const status = $("invStatus");
   if (status) status.textContent = "Opening email app...";
 
-  if (navigator.onLine) {
-    window.open(`${API_BASE}/api/inventory/export/inventory.csv`, "_blank");
-  }
+  const csvUrl = `${API_BASE}/api/inventory/export/inventory.csv`;
 
   const body =
 `Hello,
 
 Please find the Inventory Report.
 
-✅ I have downloaded the CSV report for you. Please attach the downloaded file to this email.
+✅ Please attach the downloaded CSV file to this email.
+
+Download link (CSV):
+${csvUrl}
 
 Generated: ${new Date().toLocaleString()}
 
 Regards.`;
 
+  // ✅ 1) Trigger email app first
   openMailto(to, "Inventory Report - SeaBite Tracker", body);
-  if (status) status.textContent = "✅ Email app opened (attach the downloaded CSV).";
+
+  // ✅ 2) Then open/download CSV after a short delay
+  if (navigator.onLine) {
+    setTimeout(() => {
+      window.open(csvUrl, "_blank");
+      if (status) status.textContent = "✅ Email opened. CSV download opened in a new tab — attach it to the email.";
+    }, 600);
+  } else {
+    if (status) status.textContent = "✅ Email opened. Go online to download the CSV attachment.";
+  }
 }
 
 /***********************
