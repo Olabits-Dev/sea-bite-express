@@ -1224,6 +1224,9 @@ function initAdminReset() {
     try {
       const resp = await api("/api/admin/reset", {
         method: "POST",
+        headers: {"x-admin-reset-token": token, 
+          "Authorization": `Bearer ${token}`
+        },
         body: JSON.stringify({ token })
       });
 
