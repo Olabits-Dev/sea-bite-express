@@ -23,6 +23,29 @@
     <span id="queueStatus">Pending: 0</span>
   </div>
 
+  <!-- ADMIN (Reset Database) -->
+  <div class="report-section" id="adminPanel" style="display:none;">
+    <h2>Admin</h2>
+
+    <div class="report-actions">
+      <input
+        type="password"
+        id="adminResetToken"
+        placeholder="Enter admin reset token"
+        style="max-width: 360px;"
+      />
+      <button type="button" id="resetDbBtn" class="delete-btn">
+        Reset Database
+      </button>
+    </div>
+
+    <p class="hint">
+      ⚠️ This will delete ALL data (sales, expenses, products, stock movements, losses).
+    </p>
+
+    <div id="adminStatus" class="status"></div>
+  </div>
+
   <div class="grid">
     <div class="form-section">
       <h2>Add Sale</h2>

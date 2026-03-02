@@ -1152,6 +1152,61 @@ window.addEventListener("online", async () => { setNetUI(); await flushQueue(); 
 window.addEventListener("offline", () => setNetUI());
 
 /***********************
+ * ADMIN RESET DATABASE
+ ***********************/
+function initAdminReset() {
+  const panel = $("adminPanel");
+  const btn = $("resetDbBtn");
+  const tokenInput = $("adminResetToken");
+  const status = $("adminStatus");
+
+  if (!panel || !btn || !tokenInput) return;
+
+  // show panel if user focuses / types token
+  tokenInput.addEventListener("input", () => {
+    panel.style.display = "block";
+  });
+
+  // also show panel always on desktop (optional)
+  panel.style.display = "block";
+
+  btn.addEventListener("click", async () => {
+    if (!navigator.onLine) return alert("You must be online to reset database.");
+
+    const token = tokenInput.value.trim();
+    if (!token) return alert("Enter admin reset token first.");
+
+    const confirmText = prompt("Type RESET to confirm database reset:");
+    if (confirmText !== "RESET") return alert("Cancelled.");
+
+    if (status) status.textContent = "Resetting...";
+
+    try {
+      const resp = await api("/api/admin/reset", {
+        method: "POST",
+        body: JSON.stringify({ token })
+      });
+
+      if (status) status.textContent = `✅ Reset done: ${JSON.stringify(resp)}`;
+
+      // clear local caches too
+      await idbPutMany("sales", []);
+      await idbPutMany("expenses", []);
+      await idbPutMany("products", []);
+      await idbPutMany("losses", []);
+
+      // reload fresh from server
+      await loadAll();
+      alert("✅ Database reset completed.");
+    } catch (e) {
+      const payload = e.data || { error: e.message };
+      if (status) status.textContent = `❌ Reset failed: ${JSON.stringify(payload)}`;
+      alert(`Reset failed: ${payload.error || e.message}`);
+    }
+  });
+}
+
+/***********************
  * PWA INSTALL
  ***********************/
 window.addEventListener("beforeinstallprompt", (e) => {
@@ -1171,4 +1226,5 @@ $("installBtn")?.addEventListener("click", () => {
  * INIT
  ***********************/
 setNetUI();
+initAdminReset();
 loadAll();
