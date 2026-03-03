@@ -67,6 +67,22 @@ function calcQtyFromPortion(portion, portionSize) {
   return portion * ps;
 }
 
+/***********************
+ * ✅ Friendly inline message (no more scary “failed” popups when queued)
+ ***********************/
+function toast(msg, ms = 4500) {
+  const el = $("invStatus") || $("queueStatus") || $("netStatus") || $("adminStatus");
+  if (el) {
+    const prev = el.textContent;
+    el.textContent = msg;
+    setTimeout(() => {
+      if (el.textContent === msg) el.textContent = prev || "";
+    }, ms);
+  } else {
+    alert(msg);
+  }
+}
+
 /**
  * ✅ FIXED: mailto needs to be triggered directly from a user action.
  * Also adds a fallback when mail client isn't configured.
@@ -842,8 +858,10 @@ async function addProduct() {
   const initial_qty = toNumber(initialQtyRaw, 0);
   if (initial_qty < 0) return alert("Initial quantity must be 0 or more.");
 
+  const tmpId = `tmp-${Date.now()}`;
+
   const temp = {
-    id: `tmp-${Date.now()}`,
+    id: tmpId,
     name,
     sku,
     category,
@@ -855,6 +873,7 @@ async function addProduct() {
     updated_at: new Date().toISOString()
   };
 
+  // ✅ save locally first
   products.unshift(temp);
   await idbPut("products", temp);
 
@@ -869,6 +888,7 @@ async function addProduct() {
 
   const result = await apiOrQueue({
     kind: "product_create",
+    tmp_id: tmpId, // ✅ so we can delete/replace after sync
     path: "/api/inventory/products",
     options: {
       method: "POST",
@@ -884,6 +904,12 @@ async function addProduct() {
     }
   });
 
+  // ✅ if queued/offline: show friendly message, no error popup
+  if (result.queued) {
+    toast("✅ Product saved offline — it will automatically sync to database when you're online.");
+    return;
+  }
+
   if (navigator.onLine && !result.ok) {
     alert(`Product create failed: ${result.error}`);
     await loadAll();
@@ -895,6 +921,11 @@ async function addProduct() {
 async function editProduct(id) {
   const p = products.find(x => String(x.id) === String(id));
   if (!p) return alert("Product not found.");
+
+  // Optional safety: editing tmp products is okay locally, but server update would fail
+  if (String(p.id).startsWith("tmp-")) {
+    toast("ℹ️ This product is still offline. Go online and Sync to save it to the server before editing on server.");
+  }
 
   const name = prompt("Name:", p.name); if (name === null) return;
   const sku = prompt("SKU:", p.sku || ""); if (sku === null) return;
@@ -936,6 +967,12 @@ async function editProduct(id) {
   renderProductsTables();
   renderUsageSummary();
 
+  // ✅ If tmp product, don't attempt server update
+  if (String(id).startsWith("tmp-")) {
+    toast("✅ Changes saved offline. Sync online to save to database.");
+    return;
+  }
+
   const result = await apiOrQueue({
     kind: "product_update",
     path: `/api/inventory/products/${id}`,
@@ -951,6 +988,11 @@ async function editProduct(id) {
       })
     }
   });
+
+  if (result.queued) {
+    toast("✅ Update queued offline — it will sync when online.");
+    return;
+  }
 
   if (navigator.onLine && !result.ok) {
     alert(`Product update failed: ${result.error}`);
@@ -970,11 +1012,22 @@ async function deleteProduct(id) {
   renderProductsTables();
   renderUsageSummary();
 
+  // ✅ If tmp product, no server delete required
+  if (String(id).startsWith("tmp-")) {
+    toast("✅ Deleted offline item.");
+    return;
+  }
+
   const result = await apiOrQueue({
     kind: "product_delete",
     path: `/api/inventory/products/${id}`,
     options: { method: "DELETE" }
   });
+
+  if (result.queued) {
+    toast("✅ Delete queued offline — it will sync when online.");
+    return;
+  }
 
   if (navigator.onLine && !result.ok) {
     alert(`Product delete failed: ${result.error}`);
@@ -986,17 +1039,12 @@ async function deleteProduct(id) {
 
 /**
  * ✅ FIX: Send correct qty + mode to backend for SEAFOOD.
- * Your backend supports: { type, qty, mode, note }
- * - If user chooses PORTION: send qty as "portion amount" and mode="PORTION"
- * - If user chooses QTY: send qty as quantity and mode="QTY"
- *
- * This prevents future mismatch and keeps server logs clean.
+ * Backend supports: { type, qty, mode, note }
  */
 async function stockMove(productId, type) {
   const p = products.find(x => String(x.id) === String(productId));
   if (!p) return alert("Product not found.");
 
-  // ✅ If row is still a tmp id (not yet saved to server), prevent actions that will fail server-side
   if (String(p.id).startsWith("tmp-")) {
     return alert("This product is not yet saved on the server. Please go online and click Sync Now, then try again.");
   }
@@ -1004,8 +1052,8 @@ async function stockMove(productId, type) {
   const note = prompt("Note (optional):", "") ?? "";
 
   let mode = "QTY";
-  let qtyToSend = 0;     // what we send to server
-  let deltaQty = 0;      // qty effect for optimistic UI
+  let qtyToSend = 0;
+  let deltaQty = 0;
   let label = "";
 
   if (p.category === "SEAFOOD") {
@@ -1019,7 +1067,7 @@ async function stockMove(productId, type) {
       const portion = toNumber(portionRaw, 0);
       if (!isValidQty(portion)) return alert("Portion must be > 0");
 
-      qtyToSend = portion; // server will multiply by portion_size
+      qtyToSend = portion;
       deltaQty = calcQtyFromPortion(portion, p.portion_size);
       label = `${round2(portion)} portion`;
     } else {
@@ -1071,6 +1119,11 @@ async function stockMove(productId, type) {
     }
   });
 
+  if (result.queued) {
+    toast("✅ Stock update saved offline — it will sync when you're online.");
+    return;
+  }
+
   if (navigator.onLine && !result.ok) {
     alert(`Stock move failed: ${result.error}`);
     await loadAll();
@@ -1106,7 +1159,7 @@ async function recordLoss(productId, reason) {
       const portion = toNumber(portionRaw, 0);
       if (!isValidQty(portion)) return alert("Portion must be > 0");
 
-      qtyToSend = portion; // server will multiply by portion_size
+      qtyToSend = portion;
       deltaQty = calcQtyFromPortion(portion, p.portion_size);
     } else {
       const qtyRaw = prompt(`Enter QUANTITY for ${reason}:`, "1");
@@ -1144,7 +1197,7 @@ async function recordLoss(productId, reason) {
     product_id: Number(productId),
     product_name: p.name,
     product_unit: p.unit || "",
-    qty: deltaQty, // store actual qty removed for UI display
+    qty: deltaQty,
     reason: String(reason || "").toUpperCase(),
     note,
     created_at: new Date().toISOString()
@@ -1161,6 +1214,11 @@ async function recordLoss(productId, reason) {
     path: `/api/inventory/products/${productId}/loss`,
     options: { method: "POST", body: JSON.stringify({ qty: qtyToSend, reason, note, mode }) }
   });
+
+  if (result.queued) {
+    toast("✅ Loss saved offline — it will sync when you're online.");
+    return;
+  }
 
   if (navigator.onLine && !result.ok) {
     alert(`Loss record failed: ${result.error}`);
@@ -1235,11 +1293,22 @@ async function editLoss(lossId) {
   await idbPut("losses", rec);
   renderLossTable();
 
+  // If tmp loss, only update offline
+  if (String(lossId).startsWith("tmp-")) {
+    toast("✅ Loss updated offline. Sync online to save changes to database.");
+    return;
+  }
+
   const result = await apiOrQueue({
     kind: "loss_update",
     path: `/api/inventory/losses/${lossId}`,
     options: { method: "PUT", body: JSON.stringify({ qty, reason, note }) }
   });
+
+  if (result.queued) {
+    toast("✅ Loss update queued offline — will sync when online.");
+    return;
+  }
 
   if (navigator.onLine && !result.ok) {
     alert(`Loss update failed: ${result.error}`);
@@ -1256,11 +1325,21 @@ async function deleteLoss(lossId) {
   await idbDelete("losses", lossId);
   renderLossTable();
 
+  if (String(lossId).startsWith("tmp-")) {
+    toast("✅ Deleted offline loss record.");
+    return;
+  }
+
   const result = await apiOrQueue({
     kind: "loss_delete",
     path: `/api/inventory/losses/${lossId}`,
     options: { method: "DELETE" }
   });
+
+  if (result.queued) {
+    toast("✅ Loss delete queued offline — will sync when online.");
+    return;
+  }
 
   if (navigator.onLine && !result.ok) {
     alert(`Loss delete failed: ${result.error}`);
@@ -1324,19 +1403,20 @@ function renderProductsTables() {
     } else {
       seafood.forEach(p => {
         const portion = round2(calcPortionFromQty(toNumber(p.qty, 0), toNumber(p.portion_size, 0)));
+        const isTmp = String(p.id).startsWith("tmp-");
         seafoodBody.innerHTML += `
           <tr>
-            <td>${escapeHtml(p.name)}</td>
+            <td>${escapeHtml(p.name)} ${isTmp ? '<span style="font-size:12px;opacity:.7;">(offline)</span>' : ""}</td>
             <td>${escapeHtml(p.sku || "")}</td>
             <td>${round2(toNumber(p.qty, 0))}</td>
             <td>${portion}</td>
             <td>${toNumber(p.reorder_level, 0)}</td>
             <td>
               <div class="inv-actions">
-                <button class="in-btn" type="button" onclick="stockMove('${p.id}', 'IN')">Stock IN</button>
-                <button class="out-btn" type="button" onclick="stockMove('${p.id}', 'OUT')">Stock OUT</button>
-                <button class="warn-btn" type="button" onclick="recordLoss('${p.id}', 'SPOILAGE')">Spoilage</button>
-                <button class="warn-btn" type="button" onclick="recordLoss('${p.id}', 'MISHANDLING')">Mishandling</button>
+                <button class="in-btn" type="button" onclick="stockMove('${p.id}', 'IN')" ${isTmp ? "disabled" : ""}>Stock IN</button>
+                <button class="out-btn" type="button" onclick="stockMove('${p.id}', 'OUT')" ${isTmp ? "disabled" : ""}>Stock OUT</button>
+                <button class="warn-btn" type="button" onclick="recordLoss('${p.id}', 'SPOILAGE')" ${isTmp ? "disabled" : ""}>Spoilage</button>
+                <button class="warn-btn" type="button" onclick="recordLoss('${p.id}', 'MISHANDLING')" ${isTmp ? "disabled" : ""}>Mishandling</button>
                 <button class="edit-btn" type="button" onclick="editProduct('${p.id}')">Edit</button>
                 <button class="delete-btn" type="button" onclick="deleteProduct('${p.id}')">Delete</button>
               </div>
@@ -1353,19 +1433,20 @@ function renderProductsTables() {
       kitchenBody.innerHTML = `<tr><td colspan="6">No kitchen products yet.</td></tr>`;
     } else {
       kitchen.forEach(p => {
+        const isTmp = String(p.id).startsWith("tmp-");
         kitchenBody.innerHTML += `
           <tr>
-            <td>${escapeHtml(p.name)}</td>
+            <td>${escapeHtml(p.name)} ${isTmp ? '<span style="font-size:12px;opacity:.7;">(offline)</span>' : ""}</td>
             <td>${escapeHtml(p.sku || "")}</td>
             <td>${round2(toNumber(p.qty, 0))}</td>
             <td>${escapeHtml(p.unit || "pcs")}</td>
             <td>${toNumber(p.reorder_level, 0)}</td>
             <td>
               <div class="inv-actions">
-                <button class="in-btn" type="button" onclick="stockMove('${p.id}', 'IN')">Stock IN</button>
-                <button class="out-btn" type="button" onclick="stockMove('${p.id}', 'OUT')">Stock OUT</button>
-                <button class="warn-btn" type="button" onclick="recordLoss('${p.id}', 'SPOILAGE')">Spoilage</button>
-                <button class="warn-btn" type="button" onclick="recordLoss('${p.id}', 'MISHANDLING')">Mishandling</button>
+                <button class="in-btn" type="button" onclick="stockMove('${p.id}', 'IN')" ${isTmp ? "disabled" : ""}>Stock IN</button>
+                <button class="out-btn" type="button" onclick="stockMove('${p.id}', 'OUT')" ${isTmp ? "disabled" : ""}>Stock OUT</button>
+                <button class="warn-btn" type="button" onclick="recordLoss('${p.id}', 'SPOILAGE')" ${isTmp ? "disabled" : ""}>Spoilage</button>
+                <button class="warn-btn" type="button" onclick="recordLoss('${p.id}', 'MISHANDLING')" ${isTmp ? "disabled" : ""}>Mishandling</button>
                 <button class="edit-btn" type="button" onclick="editProduct('${p.id}')">Edit</button>
                 <button class="delete-btn" type="button" onclick="deleteProduct('${p.id}')">Delete</button>
               </div>
@@ -1385,19 +1466,20 @@ function renderProductsTables() {
     }
     products.sort(sortFn);
     products.forEach(p => {
+      const isTmp = String(p.id).startsWith("tmp-");
       legacyBody.innerHTML += `
         <tr>
-          <td>${escapeHtml(p.name)}</td>
+          <td>${escapeHtml(p.name)} ${isTmp ? '<span style="font-size:12px;opacity:.7;">(offline)</span>' : ""}</td>
           <td>${escapeHtml(p.sku || "")}</td>
           <td>${escapeHtml(p.unit || "pcs")}</td>
           <td>${round2(toNumber(p.qty, 0))}</td>
           <td>${toNumber(p.reorder_level, 0)}</td>
           <td>
             <div class="inv-actions">
-              <button class="in-btn" type="button" onclick="stockMove('${p.id}', 'IN')">Stock IN</button>
-              <button class="out-btn" type="button" onclick="stockMove('${p.id}', 'OUT')">Stock OUT</button>
-              <button class="warn-btn" type="button" onclick="recordLoss('${p.id}', 'SPOILAGE')">Spoilage</button>
-              <button class="warn-btn" type="button" onclick="recordLoss('${p.id}', 'MISHANDLING')">Mishandling</button>
+              <button class="in-btn" type="button" onclick="stockMove('${p.id}', 'IN')" ${isTmp ? "disabled" : ""}>Stock IN</button>
+              <button class="out-btn" type="button" onclick="stockMove('${p.id}', 'OUT')" ${isTmp ? "disabled" : ""}>Stock OUT</button>
+              <button class="warn-btn" type="button" onclick="recordLoss('${p.id}', 'SPOILAGE')" ${isTmp ? "disabled" : ""}>Spoilage</button>
+              <button class="warn-btn" type="button" onclick="recordLoss('${p.id}', 'MISHANDLING')" ${isTmp ? "disabled" : ""}>Mishandling</button>
               <button class="edit-btn" type="button" onclick="editProduct('${p.id}')">Edit</button>
               <button class="delete-btn" type="button" onclick="deleteProduct('${p.id}')">Delete</button>
             </div>
@@ -1487,8 +1569,28 @@ Regards.`;
 }
 
 /***********************
- * QUEUE SYNC
+ * ✅ QUEUE SYNC (FIXED END-TO-END)
+ * 1) product_create queued offline → show message (done)
+ * 2) when synced, remove tmp product from IDB + memory, replace with server product
  ***********************/
+async function reconcileCreatedProduct(tmpId, serverProduct) {
+  const serverNorm = normalizeProducts([serverProduct])[0];
+
+  // remove tmp from memory + idb
+  products = products.filter(p => String(p.id) !== String(tmpId));
+  try { await idbDelete("products", tmpId); } catch {}
+
+  // add server product to memory + idb
+  products.unshift(serverNorm);
+  try { await idbPut("products", serverNorm); } catch {}
+
+  // remove tmp references in usage
+  pendingUsage = pendingUsage.filter(u => String(u.product_id) !== String(tmpId));
+
+  renderProductsTables();
+  renderUsageSummary();
+}
+
 async function flushQueue() {
   if (!navigator.onLine) return;
 
@@ -1497,7 +1599,14 @@ async function flushQueue() {
 
   for (const item of items) {
     try {
-      await api(item.path, item.options);
+      const data = await api(item.path, item.options);
+
+      // ✅ replace tmp product with server product after sync
+      if (item.kind === "product_create" && item.tmp_id && data?.id) {
+        await reconcileCreatedProduct(item.tmp_id, data);
+        toast("✅ Offline product synced to database.");
+      }
+
       await queueClearItem(item.qid);
     } catch {
       break;
