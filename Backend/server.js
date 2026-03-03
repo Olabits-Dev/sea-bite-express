@@ -31,8 +31,11 @@ function buildAllowedOrigins() {
       .forEach((o) => set.add(o));
   }
 
-  // Common Render static site domains (add yours if needed)
+  // ✅ Your known frontend domains (Render static sites)
   set.add("https://sea-bite-express-1.onrender.com");
+
+  // ✅ If you ever host frontend on same service/domain (rare but safe)
+  set.add("https://sea-bite-express.onrender.com");
 
   // Local dev
   set.add("http://localhost:3000");
@@ -50,11 +53,13 @@ const corsOptions = {
     // allow same-origin / curl / server-to-server (no Origin header)
     if (!origin) return cb(null, true);
 
+    // allow explicit list
     if (allowedOrigins.includes(origin)) return cb(null, true);
 
-    // optional: allow any *.onrender.com frontend
+    // allow any *.onrender.com frontend (handy during testing)
     if (/^https:\/\/.*\.onrender\.com$/.test(origin)) return cb(null, true);
 
+    // block
     return cb(new Error(`CORS blocked for origin: ${origin}`));
   },
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
@@ -62,9 +67,11 @@ const corsOptions = {
   maxAge: 86400,
 };
 
+// ✅ CORS should come before body parsing
 app.use(cors(corsOptions));
 
 // IMPORTANT: respond to preflight using same cors options
+// Express 4 is fine with "*", but this is also compatible if router changes later.
 app.options("*", cors(corsOptions));
 
 /**
@@ -132,7 +139,7 @@ app.post("/api/admin/reset", async (req, res) => {
       return res.status(401).json({ error: "Unauthorized" });
     }
 
-    const RESET_IMPL_VERSION = "reset-safe-final-v5";
+    const RESET_IMPL_VERSION = "reset-safe-final-v6";
 
     /**
      * ✅ SAFE RESET:
@@ -156,14 +163,18 @@ app.post("/api/admin/reset", async (req, res) => {
       "products",
       "stock_movements",
       "losses",
-      "inventory_losses", // safe: will be skipped if it doesn't exist
+      // keep this for backward-compat; will be skipped if it doesn't exist
+      "inventory_losses",
     ];
 
     const truncated = [];
+    const skipped = [];
 
     for (const name of wanted) {
-      if (!existingTables.has(name)) continue;
-
+      if (!existingTables.has(name)) {
+        skipped.push(name);
+        continue;
+      }
       await pool.query(`TRUNCATE TABLE "${name}" RESTART IDENTITY CASCADE`);
       truncated.push(name);
     }
@@ -172,7 +183,7 @@ app.post("/api/admin/reset", async (req, res) => {
       ok: true,
       RESET_IMPL_VERSION,
       truncated,
-      skipped: wanted.filter((t) => !existingTables.has(t)),
+      skipped,
     });
   } catch (err) {
     console.error("ADMIN RESET ERROR:", err);
@@ -196,11 +207,19 @@ app.use((req, res) => {
 });
 
 /**
- * Error handler (also catches CORS errors)
+ * Error handler
+ * ✅ If CORS blocks, return 403 (not 500) so debugging is clearer.
  */
 app.use((err, req, res, next) => {
+  const msg = String(err?.message || "Server error");
+
+  if (msg.startsWith("CORS blocked for origin:")) {
+    console.error("CORS ERROR:", msg);
+    return res.status(403).json({ error: msg });
+  }
+
   console.error("SERVER ERROR:", err);
-  res.status(500).json({ error: err.message || "Server error" });
+  res.status(500).json({ error: msg });
 });
 
 const PORT = process.env.PORT || 5000;
