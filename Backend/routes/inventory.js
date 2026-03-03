@@ -1,20 +1,22 @@
+// routes/inventory.js
 const express = require("express");
 const router = express.Router();
 const { pool } = require("../db");
 
 /**
- * ✅ This file is now aligned with your REAL production DB schema:
- * stock_movements columns seen in Render:
- *  - id, product_id, type, qty, note, reason, created_at, mode
+ * ✅ This file is aligned with your REAL production DB schema:
  *
- * And we FIX the constraint that blocked 'LOSS' type.
+ * stock_movements (from Render): id, product_id, type, qty, note, reason, created_at, mode
+ * losses (from Render error): requires product_name NOT NULL
+ *
+ * FIXES INCLUDED:
+ * 1) ✅ Allow 'LOSS' in stock_movements_type_check (already in your file)
+ * 2) ✅ Make losses table match production: product_name (NOT NULL), product_unit, mode
+ * 3) ✅ Loss route now inserts product_name + product_unit + mode so DB won’t reject
  */
 
 async function tableExists(name) {
-  const { rows } = await pool.query(
-    `SELECT to_regclass($1) AS reg`,
-    [`public.${name}`]
-  );
+  const { rows } = await pool.query(`SELECT to_regclass($1) AS reg`, [`public.${name}`]);
   return !!rows?.[0]?.reg;
 }
 
@@ -42,37 +44,82 @@ async function ensureSchema() {
     ADD COLUMN IF NOT EXISTS category TEXT DEFAULT 'KITCHEN'
   `);
 
-  // some schemas use portion_size, keep it consistent
   await pool.query(`
     ALTER TABLE products
     ADD COLUMN IF NOT EXISTS portion_size NUMERIC
   `);
 
-  // updated_at sometimes missing
   await pool.query(`
     ALTER TABLE products
     ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW()
   `);
 
-  // optional (your schema screenshot shows is_active)
   await pool.query(`
     ALTER TABLE products
     ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE
   `);
 
   // -----------------------
-  // LOSSES TABLE (ensure exists)
+  // ✅ LOSSES TABLE (MATCH PRODUCTION)
   // -----------------------
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS losses (
-      id SERIAL PRIMARY KEY,
-      product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
-      qty NUMERIC NOT NULL,
-      reason TEXT NOT NULL,
-      note TEXT DEFAULT '',
-      created_at TIMESTAMPTZ DEFAULT NOW()
-    )
-  `);
+  const hasLosses = await tableExists("losses");
+
+  if (!hasLosses) {
+    await pool.query(`
+      CREATE TABLE losses (
+        id SERIAL PRIMARY KEY,
+        product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+        product_name TEXT NOT NULL,
+        product_unit TEXT DEFAULT '',
+        qty NUMERIC NOT NULL,
+        reason TEXT NOT NULL,
+        note TEXT DEFAULT '',
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        mode TEXT DEFAULT 'QTY'
+      )
+    `);
+  } else {
+    const cols = await getColumns("losses");
+
+    // Add missing columns
+    if (!cols.has("product_name")) {
+      await pool.query(`ALTER TABLE losses ADD COLUMN product_name TEXT`);
+    }
+    if (!cols.has("product_unit")) {
+      await pool.query(`ALTER TABLE losses ADD COLUMN product_unit TEXT DEFAULT ''`);
+    }
+    if (!cols.has("mode")) {
+      await pool.query(`ALTER TABLE losses ADD COLUMN mode TEXT DEFAULT 'QTY'`);
+    }
+    if (!cols.has("note")) {
+      await pool.query(`ALTER TABLE losses ADD COLUMN note TEXT DEFAULT ''`);
+    }
+    if (!cols.has("created_at")) {
+      await pool.query(`ALTER TABLE losses ADD COLUMN created_at TIMESTAMPTZ DEFAULT NOW()`);
+    }
+
+    // Backfill any null/empty product_name using products table
+    await pool.query(`
+      UPDATE losses l
+      SET product_name = COALESCE(NULLIF(l.product_name,''), p.name),
+          product_unit = COALESCE(NULLIF(l.product_unit,''), p.unit, '')
+      FROM products p
+      WHERE p.id = l.product_id
+        AND (l.product_name IS NULL OR l.product_name = '')
+    `);
+
+    // Try to enforce NOT NULL (won't break if still has nulls; DO block catches)
+    await pool.query(`
+      DO $$
+      BEGIN
+        BEGIN
+          ALTER TABLE losses ALTER COLUMN product_name SET NOT NULL;
+        EXCEPTION WHEN others THEN
+          -- ignore if cannot set due to existing nulls
+        END;
+      END $$;
+    `);
+  }
 
   // -----------------------
   // STOCK_MOVEMENTS TABLE
@@ -80,7 +127,6 @@ async function ensureSchema() {
   const hasMovements = await tableExists("stock_movements");
 
   if (!hasMovements) {
-    // create new, compatible with your production style
     await pool.query(`
       CREATE TABLE stock_movements (
         id SERIAL PRIMARY KEY,
@@ -100,7 +146,6 @@ async function ensureSchema() {
       CHECK (type IN ('IN','OUT','LOSS'))
     `);
   } else {
-    // table exists: make sure required columns exist
     const cols = await getColumns("stock_movements");
 
     if (!cols.has("qty")) {
@@ -119,8 +164,7 @@ async function ensureSchema() {
       await pool.query(`ALTER TABLE stock_movements ADD COLUMN created_at TIMESTAMPTZ DEFAULT NOW()`);
     }
 
-    // ✅ CRITICAL FIX: allow LOSS in type check constraint
-    // Drop old constraint (if exists) then recreate correct one.
+    // ✅ Ensure LOSS is allowed
     await pool.query(`
       DO $$
       BEGIN
@@ -139,8 +183,6 @@ async function ensureSchema() {
       CHECK (type IN ('IN','OUT','LOSS'))
     `);
 
-    // Make sure qty is not null for new rows
-    // (won't change old rows)
     await pool.query(`
       ALTER TABLE stock_movements
       ALTER COLUMN qty SET DEFAULT 0
@@ -264,7 +306,6 @@ router.post("/products", async (req, res) => {
       [name, sku || null, unit, initial_qty, reorder_level, category, portion_size]
     );
 
-    // log initial stock IN
     if (initial_qty > 0) {
       await pool.query(
         `
@@ -379,7 +420,6 @@ router.post("/products/:id/move", async (req, res) => {
 
     let qtyDelta = qtyIn;
 
-    // SEAFOOD portion convert
     if (category === "SEAFOOD" && modeRaw === "PORTION") {
       const ps = effectivePortionSize(product);
       if (ps <= 0) return res.status(400).json({ error: "Seafood portion_size is not set properly" });
@@ -422,7 +462,7 @@ router.post("/products/:id/move", async (req, res) => {
 });
 
 // -----------------------
-// ✅ LOSS RECORD (FIXED)
+// ✅ LOSS RECORD (FIXED FOR product_name NOT NULL)
 // -----------------------
 router.post("/products/:id/loss", async (req, res) => {
   const client = await pool.connect();
@@ -454,7 +494,6 @@ router.post("/products/:id/loss", async (req, res) => {
 
     let lossQty = qtyIn;
 
-    // SEAFOOD portion convert
     if (category === "SEAFOOD" && modeRaw === "PORTION") {
       const ps = effectivePortionSize(product);
       if (ps <= 0) {
@@ -475,27 +514,34 @@ router.post("/products/:id/loss", async (req, res) => {
     // update product qty
     await client.query(`UPDATE products SET qty=$1, updated_at=NOW() WHERE id=$2`, [newQty, id]);
 
-    // insert into losses
+    // ✅ insert into losses WITH product_name + product_unit + mode (prevents NOT NULL violation)
     const { rows: lossRows } = await client.query(
       `
-      INSERT INTO losses (product_id, qty, reason, note)
-      VALUES ($1, $2, $3, $4)
+      INSERT INTO losses (product_id, product_name, product_unit, qty, reason, note, mode)
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
       RETURNING *
       `,
-      [id, lossQty, reason, note]
+      [
+        id,
+        String(product.name || "").trim() || `Product#${id}`,
+        String(product.unit || ""),
+        lossQty,
+        reason,
+        note,
+        category === "SEAFOOD" ? modeRaw : "QTY",
+      ]
     );
 
-    // ✅ insert stock movement type LOSS (NOW ALLOWED)
+    // ✅ insert stock movement type LOSS (allowed by constraint)
     await client.query(
       `
       INSERT INTO stock_movements (product_id, type, qty, mode, note, reason)
       VALUES ($1, 'LOSS', $2, $3, $4, $5)
       `,
-      [id, -lossQty, (category === "SEAFOOD" ? modeRaw : "QTY"), note || reason, reason]
+      [id, -lossQty, category === "SEAFOOD" ? modeRaw : "QTY", note || reason, reason]
     );
 
     await client.query("COMMIT");
-
     res.json({ ok: true, loss: lossRows[0] });
   } catch (e) {
     await client.query("ROLLBACK");
@@ -511,13 +557,12 @@ router.post("/products/:id/loss", async (req, res) => {
 // -----------------------
 router.get("/losses", async (req, res) => {
   try {
+    // Prefer stored name/unit in losses (more reliable when product deleted)
     const { rows } = await pool.query(
       `
       SELECT
         l.*,
-        p.name AS product_name,
-        p.unit AS product_unit,
-        COALESCE(UPPER(p.category), 'KITCHEN') AS category,
+        COALESCE(UPPER(p.category), 'KITCHEN', 'KITCHEN') AS category,
         p.portion_size
       FROM losses l
       LEFT JOIN products p ON p.id = l.product_id
