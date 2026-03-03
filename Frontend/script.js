@@ -55,7 +55,13 @@ function normalizeCategory(v) {
 
 function round2(n) { return Math.round((Number(n) || 0) * 100) / 100; }
 
-// Seafood conversions
+function isNumericString(v) {
+  const s = String(v ?? "").trim();
+  if (!s) return false;
+  return Number.isFinite(Number(s));
+}
+
+// Seafood conversions (for display + optimistic update)
 function calcPortionFromQty(qty, portionSize) {
   const ps = Number(portionSize) || 0;
   if (ps <= 0) return 0;
@@ -108,7 +114,6 @@ function isSameLoss(tmp, srv) {
 
 /**
  * ✅ FIXED: mailto needs to be triggered directly from a user action.
- * Also adds a fallback when mail client isn't configured.
  */
 function openMailto(to, subject, body) {
   const url = `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
@@ -188,7 +193,7 @@ async function setQueueUI() {
  * IndexedDB (offline queue + cached data)
  ***********************/
 const DB_NAME = "seabite_offline_db";
-const DB_VERSION = 7; // ✅ bump
+const DB_VERSION = 8; // ✅ bump (changed queue payload rules)
 
 function openDB() {
   return new Promise((resolve, reject) => {
@@ -317,9 +322,23 @@ async function api(path, options = {}) {
     throw err;
   }
 
-  const data = await res.json().catch(() => ({}));
+  const contentType = String(res.headers.get("content-type") || "").toLowerCase();
+
+  let data = {};
+  try {
+    if (contentType.includes("application/json")) {
+      data = await res.json();
+    } else {
+      // handle text/plain or empty body safely
+      const text = await res.text().catch(() => "");
+      data = text ? { message: text } : {};
+    }
+  } catch {
+    data = {};
+  }
+
   if (!res.ok) {
-    const msg = data?.error || `Request failed (${res.status})`;
+    const msg = data?.error || data?.message || `Request failed (${res.status})`;
     const err = new Error(msg);
     err.data = data;
     err.status = res.status;
@@ -330,9 +349,7 @@ async function api(path, options = {}) {
 }
 
 /**
- * ✅ IMPORTANT FIX:
- * Queue ONLY when it's a real offline/network issue.
- * If backend returns 400/500, do NOT queue (that causes infinite duplicates and "other users see nothing").
+ * ✅ Queue ONLY when it's a real offline/network issue.
  */
 async function apiOrQueue(action) {
   try {
@@ -366,7 +383,6 @@ let products = [];
 let losses = [];
 
 // pendingUsage stores BASE qty (what stock uses), but UI uses portions for seafood
-// { product_id, qty_used, display_qty, display_unit }
 let pendingUsage = [];
 
 /***********************
@@ -414,7 +430,6 @@ function normalizeProducts(list) {
   });
 }
 
-// ✅ HARD DEDUPE: prevents seafood duplicates after sync
 function dedupeProducts(list) {
   const byKey = new Map();
 
@@ -422,30 +437,21 @@ function dedupeProducts(list) {
     const key = productMatchKey(p);
     const prev = byKey.get(key);
 
-    if (!prev) {
-      byKey.set(key, p);
-      continue;
-    }
+    if (!prev) { byKey.set(key, p); continue; }
 
     const prevTmp = isTmpId(prev.id);
     const curTmp = isTmpId(p.id);
 
-    // Prefer server over tmp
     if (prevTmp && !curTmp) { byKey.set(key, p); continue; }
     if (!prevTmp && curTmp) { continue; }
 
-    // Both server or both tmp: keep newer updated_at
     const tPrev = new Date(prev.updated_at || prev.created_at || 0).getTime();
     const tCur = new Date(p.updated_at || p.created_at || 0).getTime();
     if (tCur >= tPrev) byKey.set(key, p);
   }
 
-  // Also remove exact id duplicates
   const byId = new Map();
-  for (const p of byKey.values()) {
-    byId.set(String(p.id), p);
-  }
-
+  for (const p of byKey.values()) byId.set(String(p.id), p);
   return Array.from(byId.values());
 }
 
@@ -508,7 +514,6 @@ async function loadAll() {
       sales = srvSales;
       expenses = srvExpenses;
 
-      // ✅ dedupe here (this is the key fix for seafood duplicating)
       products = dedupeProducts([...srvProducts, ...unsyncedTmpProducts]);
 
       const unsyncedTmpLosses = (localLossesRaw || []).filter(l => {
@@ -518,7 +523,6 @@ async function loadAll() {
 
       losses = enrichLosses([...(srvLossesRaw || []), ...unsyncedTmpLosses]);
 
-      // overwrite IDB with clean deduped set
       await idbClear("sales");    await idbPutMany("sales", sales);
       await idbClear("expenses"); await idbPutMany("expenses", expenses);
       await idbClear("products"); await idbPutMany("products", products);
@@ -544,7 +548,7 @@ async function loadAll() {
 }
 
 /***********************
- * PRODUCTS USED MODAL (Seafood = Portion, Kitchen = Unit)
+ * PRODUCTS USED MODAL
  ***********************/
 function openUsageModal() {
   if (!products.length) {
@@ -1021,21 +1025,30 @@ async function addProduct() {
   const name = cleanStr(getVal("pName"));
   const sku = cleanStr(getVal("pSku"));
   const category = normalizeCategory(getVal("pCategory"));
-  const unit = cleanStr(getVal("pUnit")) || "pcs";
+  let unit = cleanStr(getVal("pUnit")) || "pcs";
   const reorder_level = toNumber(getVal("pReorder"), 0);
   const portion_size = toNumber(getVal("pPortionSize"), 0);
 
   if (!name) return alert("Product name is required.");
 
+  // ✅ Kitchen swap UX: if Unit field is numeric, treat it as initial qty
+  let initial_qty_guess = null;
+  if (category === "KITCHEN" && isNumericString(unit)) {
+    initial_qty_guess = toNumber(unit, 0);
+    const unitReal = prompt("You entered a number in Unit.\nEnter the REAL unit (e.g. pcs, kg, packs):", "pcs");
+    if (unitReal === null) return;
+    unit = cleanStr(unitReal) || "pcs";
+  }
+
   if (category === "SEAFOOD" && portion_size <= 0) {
     return alert("Seafood needs 'Qty per 1 Portion' (example: 2).");
   }
 
-  if (category === "KITCHEN" && !cleanStr(getVal("pUnit"))) {
+  if (category === "KITCHEN" && !unit) {
     return alert("Other Kitchen Food requires a Unit (e.g. pcs, kg, packs).");
   }
 
-  const initialQtyRaw = prompt("Initial QUANTITY to Stock IN now?", "0");
+  const initialQtyRaw = prompt("Initial QUANTITY to Stock IN now?", String(initial_qty_guess ?? 0));
   if (initialQtyRaw === null) return;
   const initial_qty = toNumber(initialQtyRaw, 0);
   if (initial_qty < 0) return alert("Initial quantity must be 0 or more.");
@@ -1083,7 +1096,7 @@ async function addProduct() {
   });
 
   if (!result.ok && result.queued) {
-    alert("✅ Saved offline. This product will automatically sync to the database when you go online (or tap Sync Now).");
+    alert("✅ Saved offline. This product will sync when online (or tap Sync Now).");
     return;
   }
 
@@ -1199,18 +1212,12 @@ async function deleteProduct(id) {
 }
 
 /**
- * ✅ Compatibility payload:
- * Always send qty BASE (server-friendly), plus input_qty + mode.
- * This prevents "sync succeeds locally but other users see nothing" caused by backend validation rejecting PORTION payload.
+ * ✅ IMPORTANT FIX:
+ * For move/loss:
+ * - Send qty as USER INPUT (portion or qty)
+ * - Send mode to let backend convert.
+ * Local optimistic update still uses BASE delta.
  */
-function buildQtyPayload({ type, mode, qtyBase, inputQty, note }) {
-  const payload = { type, qty: qtyBase };
-  if (mode) payload.mode = mode;
-  if (inputQty !== undefined) payload.input_qty = inputQty;
-  if (note) payload.note = note;
-  return payload;
-}
-
 async function stockMove(productId, type) {
   const p = products.find(x => String(x.id) === String(productId));
   if (!p) return alert("Product not found.");
@@ -1220,7 +1227,7 @@ async function stockMove(productId, type) {
 
   let mode = "QTY";
   let inputQty = 0;   // what user entered (portion or qty)
-  let deltaQty = 0;   // BASE qty
+  let deltaQtyBase = 0; // BASE qty for optimistic local qty update
   let label = "";
 
   if (normalizeCategory(p.category) === "SEAFOOD") {
@@ -1234,7 +1241,7 @@ async function stockMove(productId, type) {
       const portion = toNumber(portionRaw, 0);
       if (!isValidQty(portion)) return alert("Portion must be > 0");
       inputQty = portion;
-      deltaQty = calcQtyFromPortion(portion, p.portion_size);
+      deltaQtyBase = calcQtyFromPortion(portion, p.portion_size);
       label = `${round2(portion)} portion`;
     } else {
       const qtyRaw = prompt(`Enter QUANTITY to Stock ${type}:`, "1");
@@ -1242,7 +1249,7 @@ async function stockMove(productId, type) {
       const qty = toNumber(qtyRaw, 0);
       if (!isValidQty(qty)) return alert("Quantity must be > 0");
       inputQty = qty;
-      deltaQty = qty;
+      deltaQtyBase = qty;
       label = `${round2(qty)} qty`;
     }
   } else {
@@ -1252,13 +1259,14 @@ async function stockMove(productId, type) {
     if (!isValidQty(qty)) return alert("Quantity must be > 0");
     mode = "QTY";
     inputQty = qty;
-    deltaQty = qty;
+    deltaQtyBase = qty;
     label = `${round2(qty)} ${p.unit || ""}`.trim();
   }
 
-  const nextQty = type === "IN" ? (toNumber(p.qty, 0) + deltaQty) : (toNumber(p.qty, 0) - deltaQty);
+  const nextQty = type === "IN" ? (toNumber(p.qty, 0) + deltaQtyBase) : (toNumber(p.qty, 0) - deltaQtyBase);
   if (type === "OUT" && nextQty < 0) return alert("Insufficient stock.");
 
+  // optimistic update
   p.qty = nextQty;
   if (normalizeCategory(p.category) === "SEAFOOD") p.portion = round2(calcPortionFromQty(p.qty, p.portion_size));
   p.updated_at = new Date().toISOString();
@@ -1267,13 +1275,13 @@ async function stockMove(productId, type) {
   renderProductsTables();
   renderUsageSummary();
 
-  const payload = buildQtyPayload({
+  // ✅ Send qty as USER INPUT (not base)
+  const payload = {
     type,
+    qty: inputQty,
     mode,
-    qtyBase: deltaQty,
-    inputQty,
     note: note ? `${note} (${label})` : `(${label})`
-  });
+  };
 
   const result = await apiOrQueue({
     kind: "stock_move",
@@ -1300,8 +1308,8 @@ async function recordLoss(productId, reason) {
   if (isTmpId(p.id)) return alert("This product is saved offline but not yet synced. Go online and click Sync Now, then try again.");
 
   let mode = "QTY";
-  let inputQty = 0; // user entered
-  let deltaQty = 0; // BASE qty
+  let inputQty = 0;      // user entered
+  let deltaQtyBase = 0;  // base qty for optimistic local qty update
 
   if (normalizeCategory(p.category) === "SEAFOOD") {
     const modeRaw = prompt("Loss by: QTY or PORTION?", "PORTION");
@@ -1314,14 +1322,14 @@ async function recordLoss(productId, reason) {
       const portion = toNumber(portionRaw, 0);
       if (!isValidQty(portion)) return alert("Portion must be > 0");
       inputQty = portion;
-      deltaQty = calcQtyFromPortion(portion, p.portion_size);
+      deltaQtyBase = calcQtyFromPortion(portion, p.portion_size);
     } else {
       const qtyRaw = prompt(`Enter QUANTITY for ${reason}:`, "1");
       if (qtyRaw === null) return;
       const qty = toNumber(qtyRaw, 0);
       if (!isValidQty(qty)) return alert("Quantity must be > 0");
       inputQty = qty;
-      deltaQty = qty;
+      deltaQtyBase = qty;
     }
   } else {
     const qtyRaw = prompt(`Enter quantity for ${reason}:`, "1");
@@ -1330,14 +1338,14 @@ async function recordLoss(productId, reason) {
     if (!isValidQty(qty)) return alert("Quantity must be > 0");
     mode = "QTY";
     inputQty = qty;
-    deltaQty = qty;
+    deltaQtyBase = qty;
   }
 
   const note = prompt("Note (optional):", "") ?? "";
-  if (toNumber(p.qty, 0) - deltaQty < 0) return alert("Insufficient stock.");
+  if (toNumber(p.qty, 0) - deltaQtyBase < 0) return alert("Insufficient stock.");
 
   // optimistic product update
-  p.qty = toNumber(p.qty, 0) - deltaQty;
+  p.qty = toNumber(p.qty, 0) - deltaQtyBase;
   if (normalizeCategory(p.category) === "SEAFOOD") p.portion = round2(calcPortionFromQty(p.qty, p.portion_size));
   p.updated_at = new Date().toISOString();
   await idbPut("products", p);
@@ -1348,7 +1356,7 @@ async function recordLoss(productId, reason) {
     product_id: Number(productId),
     product_name: p.name,
     product_unit: p.unit || "",
-    qty: deltaQty,
+    qty: deltaQtyBase, // BASE stored locally
     reason: String(reason || "").toUpperCase(),
     note,
     created_at: new Date().toISOString(),
@@ -1362,12 +1370,12 @@ async function recordLoss(productId, reason) {
   renderUsageSummary();
   renderLossTables();
 
+  // ✅ Send qty as USER INPUT (not base)
   const payload = {
-    qty: deltaQty,          // ✅ base qty (server-friendly)
+    qty: inputQty,
     reason,
     note,
-    mode,                  // ✅ extra info (server may ignore)
-    input_qty: inputQty    // ✅ extra info (server may ignore)
+    mode
   };
 
   const result = await apiOrQueue({
@@ -1377,7 +1385,7 @@ async function recordLoss(productId, reason) {
   });
 
   if (!result.ok && result.queued) {
-    alert("✅ Loss saved offline. It will automatically sync when you’re online (or tap Sync Now).");
+    alert("✅ Loss saved offline. It will sync when you’re online (or tap Sync Now).");
     return;
   }
 
@@ -1740,20 +1748,18 @@ async function flushQueue() {
       }
 
       if (item.kind === "stock_loss") {
-        const serverLoss = extractServerLoss(resp);
+        const serverLoss = extractServerLoss(resp?.loss || resp);
         if (serverLoss) await removeTmpLossesMatching(serverLoss);
       }
 
       await queueClearItem(item.qid);
     } catch (e) {
-      // ✅ If server rejects (HTTP), drop the item (it will never succeed) and notify
       if (typeof e?.status === "number") {
         console.error("Dropped queued item (server rejected):", item, e);
         await queueClearItem(item.qid);
         alert(`⚠️ A queued item was rejected by the server and removed from queue:\n${e.message}`);
         continue;
       }
-      // network issue: stop and retry later
       break;
     }
   }
