@@ -75,8 +75,13 @@ function normKey(s) {
   return String(s ?? "").trim().toLowerCase().replace(/\s+/g, " ");
 }
 
+// Match products across tmp/server
 function productMatchKey(p) {
-  return [normKey(p.name), normKey(p.sku || ""), normalizeCategory(p.category)].join("|");
+  return [
+    normKey(p.name),
+    normKey(p.sku || ""),
+    normalizeCategory(p.category),
+  ].join("|");
 }
 
 // Loose matching for losses so TMP can be removed once server version arrives
@@ -97,7 +102,7 @@ function isSameLoss(tmp, srv) {
   const t2 = new Date(srv.created_at || srv.date || 0).getTime();
   if (!t1 || !t2) return false;
 
-  // within 10 minutes = same loss (server may set slightly different timestamp)
+  // within 10 minutes = same loss
   return Math.abs(t1 - t2) <= 10 * 60 * 1000;
 }
 
@@ -183,10 +188,7 @@ async function setQueueUI() {
  * IndexedDB (offline queue + cached data)
  ***********************/
 const DB_NAME = "seabite_offline_db";
-/**
- * ✅ bumped to 6 (dedupe + split loss tables logic)
- */
-const DB_VERSION = 6;
+const DB_VERSION = 7; // ✅ bump
 
 function openDB() {
   return new Promise((resolve, reject) => {
@@ -247,9 +249,6 @@ async function idbDelete(store, key) {
   });
 }
 
-/***********************
- * ✅ HARD CLEAR HELPERS (FIXES “RESET BUT OLD DATA STILL SHOWS”)
- ***********************/
 async function idbClear(store) {
   const db = await openDB();
   return new Promise((resolve, reject) => {
@@ -260,14 +259,15 @@ async function idbClear(store) {
   });
 }
 
+/***********************
+ * ✅ HARD CLEAR HELPERS
+ ***********************/
 async function hardClearOfflineData() {
-  // 1) Clear all IDB stores (including queue)
   const stores = ["queue", "sales", "expenses", "products", "losses"];
   for (const s of stores) {
     try { await idbClear(s); } catch {}
   }
 
-  // 2) Clear Cache Storage (if you have a Service Worker / PWA caching)
   if ("caches" in window) {
     try {
       const keys = await caches.keys();
@@ -275,7 +275,6 @@ async function hardClearOfflineData() {
     } catch {}
   }
 
-  // 3) Optional: unregister service workers (prevents stale cached HTML/JS)
   if ("serviceWorker" in navigator) {
     try {
       const regs = await navigator.serviceWorker.getRegistrations();
@@ -330,15 +329,28 @@ async function api(path, options = {}) {
   return data;
 }
 
+/**
+ * ✅ IMPORTANT FIX:
+ * Queue ONLY when it's a real offline/network issue.
+ * If backend returns 400/500, do NOT queue (that causes infinite duplicates and "other users see nothing").
+ */
 async function apiOrQueue(action) {
   try {
-    if (!navigator.onLine) throw new Error("offline");
+    if (!navigator.onLine) throw Object.assign(new Error("offline"), { isOffline: true });
     const data = await api(action.path, action.options);
     return { ok: true, data };
   } catch (e) {
-    await queueAdd(action);
-    await setQueueUI();
-    return { ok: false, queued: true, error: e.message };
+    const isHttpError = typeof e?.status === "number";
+    const isOffline = !navigator.onLine || e?.isOffline || !isHttpError;
+
+    if (isOffline && !isHttpError) {
+      await queueAdd(action);
+      await setQueueUI();
+      return { ok: false, queued: true, error: e.message };
+    }
+
+    // Server rejected — do NOT queue
+    return { ok: false, queued: false, error: e.message, status: e.status, data: e.data };
   }
 }
 
@@ -382,7 +394,7 @@ function updateMiniChart(totalSales, totalExpenses) {
 }
 
 /***********************
- * NORMALIZE + ENRICH
+ * NORMALIZE + DEDUPE
  ***********************/
 function normalizeProducts(list) {
   return (list || []).map(p => {
@@ -400,6 +412,41 @@ function normalizeProducts(list) {
       reorder_level: toNumber(p.reorder_level, 0),
     };
   });
+}
+
+// ✅ HARD DEDUPE: prevents seafood duplicates after sync
+function dedupeProducts(list) {
+  const byKey = new Map();
+
+  for (const p of (list || [])) {
+    const key = productMatchKey(p);
+    const prev = byKey.get(key);
+
+    if (!prev) {
+      byKey.set(key, p);
+      continue;
+    }
+
+    const prevTmp = isTmpId(prev.id);
+    const curTmp = isTmpId(p.id);
+
+    // Prefer server over tmp
+    if (prevTmp && !curTmp) { byKey.set(key, p); continue; }
+    if (!prevTmp && curTmp) { continue; }
+
+    // Both server or both tmp: keep newer updated_at
+    const tPrev = new Date(prev.updated_at || prev.created_at || 0).getTime();
+    const tCur = new Date(p.updated_at || p.created_at || 0).getTime();
+    if (tCur >= tPrev) byKey.set(key, p);
+  }
+
+  // Also remove exact id duplicates
+  const byId = new Map();
+  for (const p of byKey.values()) {
+    byId.set(String(p.id), p);
+  }
+
+  return Array.from(byId.values());
 }
 
 function enrichLosses(lossList) {
@@ -422,7 +469,6 @@ function enrichLosses(lossList) {
         display_qty = round2(calcPortionFromQty(qtyBase, ps));
         display_unit = "portion";
       } else {
-        // fallback: if no portion size, show raw qty + unit
         display_qty = qtyBase;
         display_unit = unitBase || "qty";
       }
@@ -440,7 +486,7 @@ function enrichLosses(lossList) {
 }
 
 /***********************
- * LOAD DATA (✅ DEDUPE PRODUCTS + KEEP UNSYNCED TMP)
+ * LOAD DATA
  ***********************/
 async function loadAll() {
   setNetUI();
@@ -456,15 +502,15 @@ async function loadAll() {
       const srvProducts = normalizeProducts(await api("/api/inventory/products"));
       const srvLossesRaw = await api("/api/inventory/losses");
 
-      // ✅ Keep tmp products ONLY if not already on server
       const srvKeys = new Set(srvProducts.map(productMatchKey));
       const unsyncedTmpProducts = localProducts.filter(p => isTmpId(p.id) && !srvKeys.has(productMatchKey(p)));
 
       sales = srvSales;
       expenses = srvExpenses;
-      products = [...srvProducts, ...unsyncedTmpProducts];
 
-      // now that products is ready, enrich losses and keep tmp losses not on server
+      // ✅ dedupe here (this is the key fix for seafood duplicating)
+      products = dedupeProducts([...srvProducts, ...unsyncedTmpProducts]);
+
       const unsyncedTmpLosses = (localLossesRaw || []).filter(l => {
         if (!isTmpId(l.id)) return false;
         return !(srvLossesRaw || []).some(srv => isSameLoss(l, srv));
@@ -472,7 +518,7 @@ async function loadAll() {
 
       losses = enrichLosses([...(srvLossesRaw || []), ...unsyncedTmpLosses]);
 
-      // ✅ overwrite IDB to stop duplicates forever
+      // overwrite IDB with clean deduped set
       await idbClear("sales");    await idbPutMany("sales", sales);
       await idbClear("expenses"); await idbPutMany("expenses", expenses);
       await idbClear("products"); await idbPutMany("products", products);
@@ -481,13 +527,13 @@ async function loadAll() {
     } catch (e) {
       sales = await idbGetAll("sales");
       expenses = await idbGetAll("expenses");
-      products = normalizeProducts(await idbGetAll("products"));
+      products = dedupeProducts(normalizeProducts(await idbGetAll("products")));
       losses = enrichLosses(await idbGetAll("losses"));
     }
   } else {
     sales = await idbGetAll("sales");
     expenses = await idbGetAll("expenses");
-    products = normalizeProducts(await idbGetAll("products"));
+    products = dedupeProducts(normalizeProducts(await idbGetAll("products")));
     losses = enrichLosses(await idbGetAll("losses"));
   }
 
@@ -498,7 +544,7 @@ async function loadAll() {
 }
 
 /***********************
- * PRODUCTS USED MODAL (✅ Seafood = Portion, Kitchen = Unit)
+ * PRODUCTS USED MODAL (Seafood = Portion, Kitchen = Unit)
  ***********************/
 function openUsageModal() {
   if (!products.length) {
@@ -506,7 +552,6 @@ function openUsageModal() {
     return;
   }
 
-  // ✅ don’t allow tmp products here (they can't sync correctly to backend)
   const usable = products
     .filter(p => !isTmpId(p.id))
     .filter(p => Number(p.qty) > 0)
@@ -525,8 +570,6 @@ function openUsageModal() {
 
   usable.forEach(p => {
     const existing = pendingUsage.find(x => String(x.product_id) === String(p.id));
-
-    // seafood shows portion input
     const isSeafood = normalizeCategory(p.category) === "SEAFOOD";
     const availablePortion = isSeafood ? round2(calcPortionFromQty(toNumber(p.qty, 0), toNumber(p.portion_size, 0))) : null;
 
@@ -590,7 +633,6 @@ function saveUsage() {
 
     const isSeafood = normalizeCategory(p.category) === "SEAFOOD";
 
-    // ✅ Convert seafood portion -> BASE qty
     let qty_used_base = raw;
     let display_qty = raw;
     let display_unit = isSeafood ? "portion" : (p.unit || "pcs");
@@ -603,7 +645,6 @@ function saveUsage() {
       }
     }
 
-    // validate against stock
     if (toNumber(p.qty, 0) - qty_used_base < 0) {
       alert(`Insufficient stock for ${p.name}. Reduce used amount.`);
       return;
@@ -611,7 +652,7 @@ function saveUsage() {
 
     next.push({
       product_id: pid,
-      qty_used: qty_used_base, // ✅ BASE qty deducted from stock + sent to server
+      qty_used: qty_used_base, // BASE qty
       display_qty,
       display_unit
     });
@@ -643,7 +684,7 @@ function renderUsageSummary() {
 }
 
 /***********************
- * FINANCE CRUD
+ * FINANCE TABLE
  ***********************/
 function formatProductsUsed(items) {
   if (!items || !items.length) return "";
@@ -695,6 +736,9 @@ function renderFinanceTable() {
   });
 }
 
+/***********************
+ * FINANCE CRUD
+ ***********************/
 async function addSale() {
   const amount = parseFloat(getVal("saleAmount"));
   const description = getVal("saleDesc").trim();
@@ -704,7 +748,6 @@ async function addSale() {
     return;
   }
 
-  // If products exist but no usage picked
   if (products.length && pendingUsage.length === 0) {
     const ok = confirm("Do you want to record products used for this sale? (Recommended)");
     if (ok) {
@@ -713,7 +756,6 @@ async function addSale() {
     }
   }
 
-  // ✅ Safety: if online and usage includes any tmp (shouldn't happen), block
   if (navigator.onLine) {
     for (const it of pendingUsage) {
       const p = products.find(x => Number(x.id) === Number(it.product_id));
@@ -724,7 +766,6 @@ async function addSale() {
     }
   }
 
-  // Optimistic sale
   const tempId = `tmp-${Date.now()}`;
   const saleTemp = {
     id: tempId,
@@ -735,7 +776,7 @@ async function addSale() {
       const p = products.find(x => Number(x.id) === Number(it.product_id));
       return {
         product_id: it.product_id,
-        qty_used: it.qty_used, // ✅ BASE qty
+        qty_used: it.qty_used, // BASE qty
         product_name: p?.name || "",
         product_unit: p?.unit || ""
       };
@@ -745,7 +786,6 @@ async function addSale() {
   sales.unshift(saleTemp);
   await idbPut("sales", saleTemp);
 
-  // Deduct stock locally (BASE qty)
   for (const it of pendingUsage) {
     const p = products.find(x => Number(x.id) === Number(it.product_id));
     if (p) {
@@ -779,6 +819,11 @@ async function addSale() {
     }
   });
 
+  if (!result.ok && result.queued) {
+    alert("✅ Sale saved offline. It will sync automatically when you’re online (or tap Sync Now).");
+    return;
+  }
+
   if (navigator.onLine && !result.ok) {
     alert(`Sale failed: ${result.error}`);
     await loadAll();
@@ -811,6 +856,11 @@ async function addExpense() {
     options: { method: "POST", body: JSON.stringify({ amount, description }) }
   });
 
+  if (!result.ok && result.queued) {
+    alert("✅ Expense saved offline. It will sync automatically when you’re online (or tap Sync Now).");
+    return;
+  }
+
   if (navigator.onLine && !result.ok) {
     alert(`Expense failed: ${result.error}`);
     await loadAll();
@@ -833,7 +883,7 @@ async function deleteRecord(id, type) {
       options: { method: "DELETE" }
     });
 
-    if (navigator.onLine && !result.ok) {
+    if (navigator.onLine && !result.ok && !result.queued) {
       alert(`Delete failed: ${result.error}`);
       await loadAll();
     } else if (navigator.onLine && result.ok) {
@@ -852,7 +902,7 @@ async function deleteRecord(id, type) {
     options: { method: "DELETE" }
   });
 
-  if (navigator.onLine && !result.ok) {
+  if (navigator.onLine && !result.ok && !result.queued) {
     alert(`Delete failed: ${result.error}`);
     await loadAll();
   } else if (navigator.onLine && result.ok) {
@@ -885,7 +935,7 @@ async function editRecord(id, type) {
       options: { method: "PUT", body: JSON.stringify({ amount, description }) }
     });
 
-    if (navigator.onLine && !result.ok) {
+    if (navigator.onLine && !result.ok && !result.queued) {
       alert(`Update failed: ${result.error}`);
       await loadAll();
     } else if (navigator.onLine && result.ok) {
@@ -917,7 +967,7 @@ async function editRecord(id, type) {
     options: { method: "PUT", body: JSON.stringify({ amount, description }) }
   });
 
-  if (navigator.onLine && !result.ok) {
+  if (navigator.onLine && !result.ok && !result.queued) {
     alert(`Update failed: ${result.error}`);
     await loadAll();
   } else if (navigator.onLine && result.ok) {
@@ -965,7 +1015,7 @@ function exportCSV() {
 }
 
 /***********************
- * INVENTORY (SEAFOOD + KITCHEN)
+ * INVENTORY
  ***********************/
 async function addProduct() {
   const name = cleanStr(getVal("pName"));
@@ -1003,7 +1053,7 @@ async function addProduct() {
     updated_at: new Date().toISOString()
   };
 
-  products.unshift(temp);
+  products = dedupeProducts([temp, ...products]);
   await idbPut("products", temp);
 
   renderProductsTables();
@@ -1032,7 +1082,6 @@ async function addProduct() {
     }
   });
 
-  // ✅ NEW: better message when queued (offline)
   if (!result.ok && result.queued) {
     alert("✅ Saved offline. This product will automatically sync to the database when you go online (or tap Sync Now).");
     return;
@@ -1091,6 +1140,7 @@ async function editProduct(id) {
   p.updated_at = new Date().toISOString();
 
   await idbPut("products", p);
+  products = dedupeProducts(products);
   renderProductsTables();
   renderUsageSummary();
 
@@ -1110,7 +1160,7 @@ async function editProduct(id) {
     }
   });
 
-  if (navigator.onLine && !result.ok) {
+  if (navigator.onLine && !result.ok && !result.queued) {
     alert(`Product update failed: ${result.error}`);
     await loadAll();
   } else if (navigator.onLine && result.ok) {
@@ -1120,7 +1170,6 @@ async function editProduct(id) {
 
 async function deleteProduct(id) {
   const p = products.find(x => String(x.id) === String(id));
-
   if (!confirm("Delete this product?")) return;
 
   products = products.filter(x => String(x.id) !== String(id));
@@ -1130,7 +1179,6 @@ async function deleteProduct(id) {
   renderProductsTables();
   renderUsageSummary();
 
-  // If it was tmp, delete locally only
   if (p && isTmpId(p.id)) {
     alert("✅ Deleted offline product (not yet synced).");
     return;
@@ -1142,7 +1190,7 @@ async function deleteProduct(id) {
     options: { method: "DELETE" }
   });
 
-  if (navigator.onLine && !result.ok) {
+  if (navigator.onLine && !result.ok && !result.queued) {
     alert(`Product delete failed: ${result.error}`);
     await loadAll();
   } else if (navigator.onLine && result.ok) {
@@ -1151,23 +1199,28 @@ async function deleteProduct(id) {
 }
 
 /**
- * ✅ Stock move:
- * - Seafood: sends correct qty + mode to backend
- * - Kitchen: qty only
+ * ✅ Compatibility payload:
+ * Always send qty BASE (server-friendly), plus input_qty + mode.
+ * This prevents "sync succeeds locally but other users see nothing" caused by backend validation rejecting PORTION payload.
  */
+function buildQtyPayload({ type, mode, qtyBase, inputQty, note }) {
+  const payload = { type, qty: qtyBase };
+  if (mode) payload.mode = mode;
+  if (inputQty !== undefined) payload.input_qty = inputQty;
+  if (note) payload.note = note;
+  return payload;
+}
+
 async function stockMove(productId, type) {
   const p = products.find(x => String(x.id) === String(productId));
   if (!p) return alert("Product not found.");
-
-  if (isTmpId(p.id)) {
-    return alert("This product is saved offline but not yet synced. Go online and click Sync Now, then try again.");
-  }
+  if (isTmpId(p.id)) return alert("This product is saved offline but not yet synced. Go online and click Sync Now, then try again.");
 
   const note = prompt("Note (optional):", "") ?? "";
 
   let mode = "QTY";
-  let qtyToSend = 0;     // what we send to server
-  let deltaQty = 0;      // qty effect for optimistic UI
+  let inputQty = 0;   // what user entered (portion or qty)
+  let deltaQty = 0;   // BASE qty
   let label = "";
 
   if (normalizeCategory(p.category) === "SEAFOOD") {
@@ -1180,8 +1233,7 @@ async function stockMove(productId, type) {
       if (portionRaw === null) return;
       const portion = toNumber(portionRaw, 0);
       if (!isValidQty(portion)) return alert("Portion must be > 0");
-
-      qtyToSend = portion; // server multiplies by portion_size
+      inputQty = portion;
       deltaQty = calcQtyFromPortion(portion, p.portion_size);
       label = `${round2(portion)} portion`;
     } else {
@@ -1189,8 +1241,7 @@ async function stockMove(productId, type) {
       if (qtyRaw === null) return;
       const qty = toNumber(qtyRaw, 0);
       if (!isValidQty(qty)) return alert("Quantity must be > 0");
-
-      qtyToSend = qty;
+      inputQty = qty;
       deltaQty = qty;
       label = `${round2(qty)} qty`;
     }
@@ -1200,7 +1251,7 @@ async function stockMove(productId, type) {
     const qty = toNumber(qtyRaw, 0);
     if (!isValidQty(qty)) return alert("Quantity must be > 0");
     mode = "QTY";
-    qtyToSend = qty;
+    inputQty = qty;
     deltaQty = qty;
     label = `${round2(qty)} ${p.unit || ""}`.trim();
   }
@@ -1208,30 +1259,32 @@ async function stockMove(productId, type) {
   const nextQty = type === "IN" ? (toNumber(p.qty, 0) + deltaQty) : (toNumber(p.qty, 0) - deltaQty);
   if (type === "OUT" && nextQty < 0) return alert("Insufficient stock.");
 
-  // optimistic update
   p.qty = nextQty;
-  if (normalizeCategory(p.category) === "SEAFOOD") {
-    p.portion = round2(calcPortionFromQty(p.qty, p.portion_size));
-  }
+  if (normalizeCategory(p.category) === "SEAFOOD") p.portion = round2(calcPortionFromQty(p.qty, p.portion_size));
   p.updated_at = new Date().toISOString();
   await idbPut("products", p);
 
   renderProductsTables();
   renderUsageSummary();
 
+  const payload = buildQtyPayload({
+    type,
+    mode,
+    qtyBase: deltaQty,
+    inputQty,
+    note: note ? `${note} (${label})` : `(${label})`
+  });
+
   const result = await apiOrQueue({
     kind: "stock_move",
     path: `/api/inventory/products/${productId}/move`,
-    options: {
-      method: "POST",
-      body: JSON.stringify({
-        type,
-        qty: qtyToSend,
-        mode,
-        note: note ? `${note} (${label})` : `(${label})`
-      })
-    }
+    options: { method: "POST", body: JSON.stringify(payload) }
   });
+
+  if (!result.ok && result.queued) {
+    alert("✅ Saved offline. This stock move will auto-sync when online.");
+    return;
+  }
 
   if (navigator.onLine && !result.ok) {
     alert(`Stock move failed: ${result.error}`);
@@ -1241,23 +1294,14 @@ async function stockMove(productId, type) {
   }
 }
 
-/**
- * ✅ Loss record works offline & syncs:
- * - Seafood: choose PORTION or QTY, send mode to backend
- * - Kitchen: QTY only
- * - UI shows Seafood losses in PORTION
- */
 async function recordLoss(productId, reason) {
   const p = products.find(x => String(x.id) === String(productId));
   if (!p) return alert("Product not found.");
-
-  if (isTmpId(p.id)) {
-    return alert("This product is saved offline but not yet synced. Go online and click Sync Now, then try again.");
-  }
+  if (isTmpId(p.id)) return alert("This product is saved offline but not yet synced. Go online and click Sync Now, then try again.");
 
   let mode = "QTY";
-  let qtyToSend = 0;
-  let deltaQty = 0;
+  let inputQty = 0; // user entered
+  let deltaQty = 0; // BASE qty
 
   if (normalizeCategory(p.category) === "SEAFOOD") {
     const modeRaw = prompt("Loss by: QTY or PORTION?", "PORTION");
@@ -1269,16 +1313,14 @@ async function recordLoss(productId, reason) {
       if (portionRaw === null) return;
       const portion = toNumber(portionRaw, 0);
       if (!isValidQty(portion)) return alert("Portion must be > 0");
-
-      qtyToSend = portion; // server multiplies by portion_size
+      inputQty = portion;
       deltaQty = calcQtyFromPortion(portion, p.portion_size);
     } else {
       const qtyRaw = prompt(`Enter QUANTITY for ${reason}:`, "1");
       if (qtyRaw === null) return;
       const qty = toNumber(qtyRaw, 0);
       if (!isValidQty(qty)) return alert("Quantity must be > 0");
-
-      qtyToSend = qty;
+      inputQty = qty;
       deltaQty = qty;
     }
   } else {
@@ -1286,14 +1328,12 @@ async function recordLoss(productId, reason) {
     if (qtyRaw === null) return;
     const qty = toNumber(qtyRaw, 0);
     if (!isValidQty(qty)) return alert("Quantity must be > 0");
-
     mode = "QTY";
-    qtyToSend = qty;
+    inputQty = qty;
     deltaQty = qty;
   }
 
   const note = prompt("Note (optional):", "") ?? "";
-
   if (toNumber(p.qty, 0) - deltaQty < 0) return alert("Insufficient stock.");
 
   // optimistic product update
@@ -1308,7 +1348,7 @@ async function recordLoss(productId, reason) {
     product_id: Number(productId),
     product_name: p.name,
     product_unit: p.unit || "",
-    qty: deltaQty, // ✅ base qty removed from stock
+    qty: deltaQty,
     reason: String(reason || "").toUpperCase(),
     note,
     created_at: new Date().toISOString(),
@@ -1322,14 +1362,22 @@ async function recordLoss(productId, reason) {
   renderUsageSummary();
   renderLossTables();
 
+  const payload = {
+    qty: deltaQty,          // ✅ base qty (server-friendly)
+    reason,
+    note,
+    mode,                  // ✅ extra info (server may ignore)
+    input_qty: inputQty    // ✅ extra info (server may ignore)
+  };
+
   const result = await apiOrQueue({
     kind: "stock_loss",
     path: `/api/inventory/products/${productId}/loss`,
-    options: { method: "POST", body: JSON.stringify({ qty: qtyToSend, reason, note, mode }) }
+    options: { method: "POST", body: JSON.stringify(payload) }
   });
 
   if (!result.ok && result.queued) {
-    alert("✅ Loss saved offline. It will automatically sync when you are online (or tap Sync Now).");
+    alert("✅ Loss saved offline. It will automatically sync when you’re online (or tap Sync Now).");
     return;
   }
 
@@ -1342,12 +1390,12 @@ async function recordLoss(productId, reason) {
 }
 
 /***********************
- * LOSS TABLES (✅ split seafoodLossTable + kitchenLossTable)
+ * LOSS TABLES (split)
  ***********************/
 function renderLossTables() {
   const seafoodBody = $("seafoodLossTable");
   const kitchenBody = $("kitchenLossTable");
-  const legacyBody = $("lossTable"); // fallback if old HTML
+  const legacyBody = $("lossTable");
 
   const list = enrichLosses(losses);
   const seafood = list.filter(l => normalizeCategory(l.category) === "SEAFOOD");
@@ -1373,7 +1421,6 @@ function renderLossTables() {
         <td>${formatDateTime(date)}</td>
         <td>
           <div class="action-buttons">
-            <button class="edit-btn" type="button" onclick="editLoss('${l.id}')">Edit</button>
             <button class="delete-btn" type="button" onclick="deleteLoss('${l.id}')">Delete</button>
           </div>
         </td>
@@ -1401,70 +1448,6 @@ function renderLossTables() {
   }
 }
 
-async function editLoss(lossId) {
-  const rec = losses.find(x => String(x.id) === String(lossId));
-  if (!rec) return alert("Loss record not found.");
-
-  // Allow editing offline tmp too (it edits local only; server edit only if non-tmp)
-  const p = products.find(x => String(x.id) === String(rec.product_id));
-  const category = normalizeCategory(rec.category ?? p?.category ?? "KITCHEN");
-
-  const currentBaseQty = toNumber(rec.qty ?? rec.qty_lost, 0);
-
-  // Show seafood edit prompt in PORTION (but store base qty)
-  let newBaseQty = currentBaseQty;
-
-  if (category === "SEAFOOD") {
-    const ps = toNumber(p?.portion_size ?? rec.portion_size, 0);
-    const currentPortion = ps > 0 ? round2(calcPortionFromQty(currentBaseQty, ps)) : currentBaseQty;
-    const rawPortion = prompt("Edit loss Portion:", String(currentPortion));
-    if (rawPortion === null) return;
-    const portion = toNumber(rawPortion, 0);
-    if (!isValidQty(portion)) return alert("Portion must be > 0");
-    newBaseQty = ps > 0 ? calcQtyFromPortion(portion, ps) : portion;
-  } else {
-    const rawQty = prompt("Edit loss Qty:", String(currentBaseQty));
-    if (rawQty === null) return;
-    const qty = toNumber(rawQty, 0);
-    if (!isValidQty(qty)) return alert("Qty must be > 0");
-    newBaseQty = qty;
-  }
-
-  const newReasonRaw = prompt("Edit reason (SPOILAGE or MISHANDLING):", String(rec.reason || "").toUpperCase());
-  if (newReasonRaw === null) return;
-
-  const reason = String(newReasonRaw).trim().toUpperCase();
-  if (!["SPOILAGE", "MISHANDLING"].includes(reason)) return alert("Reason must be SPOILAGE or MISHANDLING");
-
-  const note = prompt("Edit note (optional):", rec.note || "") ?? (rec.note || "");
-
-  rec.qty = newBaseQty;
-  rec.reason = reason;
-  rec.note = note;
-
-  await idbPut("losses", rec);
-  renderLossTables();
-
-  // If tmp, stop here (no server ID)
-  if (isTmpId(rec.id)) {
-    alert("✅ Updated offline loss. It will sync when you go online.");
-    return;
-  }
-
-  const result = await apiOrQueue({
-    kind: "loss_update",
-    path: `/api/inventory/losses/${lossId}`,
-    options: { method: "PUT", body: JSON.stringify({ qty: newBaseQty, reason, note }) }
-  });
-
-  if (navigator.onLine && !result.ok) {
-    alert(`Loss update failed: ${result.error}`);
-    await loadAll();
-  } else if (navigator.onLine && result.ok) {
-    await loadAll();
-  }
-}
-
 async function deleteLoss(lossId) {
   if (!confirm("Delete this loss record?")) return;
 
@@ -1474,7 +1457,6 @@ async function deleteLoss(lossId) {
   await idbDelete("losses", lossId);
   renderLossTables();
 
-  // tmp only delete locally
   if (rec && isTmpId(rec.id)) {
     alert("✅ Deleted offline loss (not yet synced).");
     return;
@@ -1486,7 +1468,7 @@ async function deleteLoss(lossId) {
     options: { method: "DELETE" }
   });
 
-  if (navigator.onLine && !result.ok) {
+  if (navigator.onLine && !result.ok && !result.queued) {
     alert(`Loss delete failed: ${result.error}`);
     await loadAll();
   } else if (navigator.onLine && result.ok) {
@@ -1527,7 +1509,7 @@ function exportLossCSV() {
 }
 
 /***********************
- * RENDER INVENTORY TABLES (SEAFOOD + KITCHEN)
+ * INVENTORY TABLES
  ***********************/
 function renderProductsTables() {
   const seafoodBody = $("seafoodTable");
@@ -1604,15 +1586,14 @@ function renderProductsTables() {
     }
   }
 
-  // legacy combined
   if (legacyBody && !seafoodBody && !kitchenBody) {
     legacyBody.innerHTML = "";
     if (!products.length) {
       legacyBody.innerHTML = `<tr><td colspan="6">No products yet.</td></tr>`;
       return;
     }
-    products.sort(sortFn);
-    products.forEach(p => {
+    const all = [...products].sort(sortFn);
+    all.forEach(p => {
       legacyBody.innerHTML += `
         <tr>
           <td>${escapeHtml(p.name)}</td>
@@ -1712,33 +1693,35 @@ Regards.`;
 }
 
 /***********************
- * QUEUE SYNC (✅ removes TMP duplicates on success)
+ * QUEUE SYNC
  ***********************/
-async function removeTmpProductIfSynced(serverProduct) {
-  const srvKey = productMatchKey(serverProduct);
-
-  // Remove matching tmp from memory + idb
-  const toRemove = products.filter(p => isTmpId(p.id) && productMatchKey(p) === srvKey);
-  for (const tmp of toRemove) {
-    await idbDelete("products", tmp.id);
-  }
-  products = products.filter(p => !(isTmpId(p.id) && productMatchKey(p) === srvKey));
-
-  // Add/Upsert server product locally
-  const normalized = normalizeProducts([serverProduct])[0];
-  const existingIdx = products.findIndex(p => String(p.id) === String(normalized.id));
-  if (existingIdx >= 0) products[existingIdx] = normalized;
-  else products.unshift(normalized);
-
-  await idbPut("products", normalized);
+function extractServerProduct(resp) {
+  if (!resp) return null;
+  if (resp.id) return resp;
+  if (resp.product?.id) return resp.product;
+  if (resp.data?.product?.id) return resp.data.product;
+  return null;
 }
 
-async function removeTmpLossIfSynced(serverLoss) {
-  const list = await idbGetAll("losses");
-  const tmpMatches = (list || []).filter(l => isTmpId(l.id) && isSameLoss(l, serverLoss));
-  for (const tmp of tmpMatches) {
-    await idbDelete("losses", tmp.id);
-  }
+function extractServerLoss(resp) {
+  if (!resp) return null;
+  if (resp.product_id) return resp;
+  if (resp.loss?.product_id) return resp.loss;
+  if (resp.data?.loss?.product_id) return resp.data.loss;
+  return null;
+}
+
+async function removeTmpProductsMatching(serverProduct) {
+  const key = productMatchKey(serverProduct);
+  const localList = await idbGetAll("products");
+  const tmpMatches = (localList || []).filter(p => isTmpId(p.id) && productMatchKey(p) === key);
+  for (const tmp of tmpMatches) await idbDelete("products", tmp.id);
+}
+
+async function removeTmpLossesMatching(serverLoss) {
+  const localList = await idbGetAll("losses");
+  const tmpMatches = (localList || []).filter(l => isTmpId(l.id) && isSameLoss(l, serverLoss));
+  for (const tmp of tmpMatches) await idbDelete("losses", tmp.id);
 }
 
 async function flushQueue() {
@@ -1751,22 +1734,26 @@ async function flushQueue() {
     try {
       const resp = await api(item.path, item.options);
 
-      // ✅ If product_create succeeded, replace tmp with server record
-      if (item.kind === "product_create" && resp && resp.id) {
-        await removeTmpProductIfSynced(resp);
+      if (item.kind === "product_create") {
+        const serverProduct = extractServerProduct(resp);
+        if (serverProduct) await removeTmpProductsMatching(serverProduct);
       }
 
-      // ✅ If loss succeeded, remove matching tmp loss
-      if (item.kind === "stock_loss" && resp) {
-        // backend returns { ok:true, loss:{...} } OR similar
-        const serverLoss = resp.loss || resp;
-        if (serverLoss && serverLoss.product_id) {
-          await removeTmpLossIfSynced(serverLoss);
-        }
+      if (item.kind === "stock_loss") {
+        const serverLoss = extractServerLoss(resp);
+        if (serverLoss) await removeTmpLossesMatching(serverLoss);
       }
 
       await queueClearItem(item.qid);
-    } catch {
+    } catch (e) {
+      // ✅ If server rejects (HTTP), drop the item (it will never succeed) and notify
+      if (typeof e?.status === "number") {
+        console.error("Dropped queued item (server rejected):", item, e);
+        await queueClearItem(item.qid);
+        alert(`⚠️ A queued item was rejected by the server and removed from queue:\n${e.message}`);
+        continue;
+      }
+      // network issue: stop and retry later
       break;
     }
   }
