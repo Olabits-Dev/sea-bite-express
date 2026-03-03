@@ -243,10 +243,39 @@
     </table>
   </div>
 
-  <!-- Loss History -->
+  <!-- ✅ LOSS HISTORY (SPLIT: Seafood vs Kitchen) -->
   <div class="section-title">
-    <h2>Loss History</h2>
-    <p class="muted">Spoilage / Mishandling log</p>
+    <h2>Loss History - Seafood</h2>
+    <p class="muted">Spoilage / Mishandling for seafood (works offline & syncs)</p>
+  </div>
+
+  <div class="table-wrap">
+    <table class="records-table inventory-table">
+      <colgroup>
+        <col />
+        <col style="width: 90px" />
+        <col style="width: 120px" />
+        <col style="width: 150px" />
+        <col style="width: 220px" />
+        <col style="width: 180px" />
+      </colgroup>
+      <thead>
+        <tr>
+          <th>Product</th>
+          <th>Qty</th>
+          <th>Unit</th>
+          <th>Reason</th>
+          <th>Date</th>
+          <th class="action-col">Action</th>
+        </tr>
+      </thead>
+      <tbody id="seafoodLossTable"></tbody>
+    </table>
+  </div>
+
+  <div class="section-title">
+    <h2>Loss History - Other Kitchen Food</h2>
+    <p class="muted">Spoilage / Mishandling for kitchen items (works offline & syncs)</p>
   </div>
 
   <div class="report-actions">
@@ -273,7 +302,7 @@
           <th class="action-col">Action</th>
         </tr>
       </thead>
-      <tbody id="lossTable"></tbody>
+      <tbody id="kitchenLossTable"></tbody>
     </table>
   </div>
 
@@ -285,7 +314,10 @@
         <button type="button" class="modal-close" onclick="closeUsageModal()">✕</button>
       </div>
 
-      <p class="modal-hint">Enter quantities used for any product. Leave 0 if not used.</p>
+      <p class="modal-hint">
+        ✅ Seafood: enter <strong>portion used</strong>.<br/>
+        ✅ Other Kitchen Food: enter <strong>quantity in units</strong>.
+      </p>
 
       <div class="modal-body" id="usageList"></div>
 
