@@ -16,7 +16,6 @@ const app = express();
  * -----------------------
  * CORS
  * -----------------------
- * Allows your frontend to call backend safely (including preflight OPTIONS)
  */
 function buildAllowedOrigins() {
   const set = new Set();
@@ -31,11 +30,9 @@ function buildAllowedOrigins() {
       .forEach((o) => set.add(o));
   }
 
-  // ✅ Your known frontend domains (Render static sites)
+  // Your Render static frontend(s)
   set.add("https://sea-bite-express-1.onrender.com");
-
-  // ✅ If you ever host frontend on same service/domain (rare but safe)
-  set.add("https://sea-bite-express.onrender.com");
+  set.add("https://sea-bite-express.onrender.com"); // ✅ add this too (sometimes frontend runs here)
 
   // Local dev
   set.add("http://localhost:3000");
@@ -50,16 +47,9 @@ const allowedOrigins = buildAllowedOrigins();
 
 const corsOptions = {
   origin: (origin, cb) => {
-    // allow same-origin / curl / server-to-server (no Origin header)
     if (!origin) return cb(null, true);
-
-    // allow explicit list
     if (allowedOrigins.includes(origin)) return cb(null, true);
-
-    // allow any *.onrender.com frontend (handy during testing)
     if (/^https:\/\/.*\.onrender\.com$/.test(origin)) return cb(null, true);
-
-    // block
     return cb(new Error(`CORS blocked for origin: ${origin}`));
   },
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
@@ -67,11 +57,7 @@ const corsOptions = {
   maxAge: 86400,
 };
 
-// ✅ CORS should come before body parsing
 app.use(cors(corsOptions));
-
-// IMPORTANT: respond to preflight using same cors options
-// Express 4 is fine with "*", but this is also compatible if router changes later.
 app.options("*", cors(corsOptions));
 
 /**
@@ -80,7 +66,7 @@ app.options("*", cors(corsOptions));
 app.use(express.json({ limit: "1mb" }));
 
 /**
- * Small request log (helpful in Render logs)
+ * Small request log
  */
 app.use((req, res, next) => {
   console.log(`${new Date().toISOString()} ${req.method} ${req.url}`);
@@ -100,17 +86,49 @@ app.get("/", (req, res) => {
     inventory: "/api/inventory/products",
     finance: "/api/finance/sales",
     adminReset: "/api/admin/reset",
+    debugPing: "/api/debug/ping",
+    debugSchema: "/api/debug/schema",
   });
+});
+
+/**
+ * ✅ DEPLOY CHECK (MUST NOT 404)
+ * If this returns 404, then you are NOT deploying the backend you think you are.
+ */
+app.get("/api/debug/ping", (req, res) => {
+  res.json({
+    ok: true,
+    // change this string any time you redeploy so you know it updated
+    deployTag: "debug-ping-v1",
+    time: new Date().toISOString(),
+  });
+});
+
+/**
+ * ✅ SERVER-LEVEL SCHEMA DEBUG (does not depend on inventory.js)
+ * If this is 404 => wrong service OR deploy not updated OR route after 404 (fixed here).
+ */
+app.get("/api/debug/schema", async (req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT table_name, column_name, data_type
+      FROM information_schema.columns
+      WHERE table_schema='public'
+        AND table_name IN ('products','losses','stock_movements')
+      ORDER BY table_name, ordinal_position
+    `);
+
+    res.json({ ok: true, columns: rows });
+  } catch (e) {
+    console.error("DEBUG SCHEMA ERROR:", e);
+    res.status(500).json({ error: e.message || "debug failed" });
+  }
 });
 
 /**
  * -----------------------
  * Admin Reset (TOKEN)
  * -----------------------
- * Token can be sent in:
- *  - Header: x-admin-reset-token
- *  - Header: Authorization: Bearer <token>
- *  - Body: { token }
  */
 function readResetToken(req) {
   const h1 = String(req.headers["x-admin-reset-token"] || "").trim();
@@ -127,7 +145,6 @@ function readResetToken(req) {
 
 app.post("/api/admin/reset", async (req, res) => {
   try {
-    // ---- AUTH ----
     const provided = readResetToken(req);
     const expected = String(process.env.ADMIN_RESET_TOKEN || "").trim();
 
@@ -139,13 +156,8 @@ app.post("/api/admin/reset", async (req, res) => {
       return res.status(401).json({ error: "Unauthorized" });
     }
 
-    const RESET_IMPL_VERSION = "reset-safe-final-v6";
+    const RESET_IMPL_VERSION = "reset-safe-final-v5";
 
-    /**
-     * ✅ SAFE RESET:
-     * Only truncate tables that exist in public schema.
-     * (Views won't appear in pg_tables, so they are ignored automatically.)
-     */
     const tableQuery = `
       SELECT tablename
       FROM pg_tables
@@ -155,7 +167,6 @@ app.post("/api/admin/reset", async (req, res) => {
     const { rows } = await pool.query(tableQuery);
     const existingTables = new Set(rows.map((r) => r.tablename));
 
-    // Tables used by the app (add/remove as your schema changes)
     const wanted = [
       "sales",
       "sale_items",
@@ -163,18 +174,13 @@ app.post("/api/admin/reset", async (req, res) => {
       "products",
       "stock_movements",
       "losses",
-      // keep this for backward-compat; will be skipped if it doesn't exist
       "inventory_losses",
     ];
 
     const truncated = [];
-    const skipped = [];
 
     for (const name of wanted) {
-      if (!existingTables.has(name)) {
-        skipped.push(name);
-        continue;
-      }
+      if (!existingTables.has(name)) continue;
       await pool.query(`TRUNCATE TABLE "${name}" RESTART IDENTITY CASCADE`);
       truncated.push(name);
     }
@@ -183,7 +189,7 @@ app.post("/api/admin/reset", async (req, res) => {
       ok: true,
       RESET_IMPL_VERSION,
       truncated,
-      skipped,
+      skipped: wanted.filter((t) => !existingTables.has(t)),
     });
   } catch (err) {
     console.error("ADMIN RESET ERROR:", err);
@@ -199,23 +205,6 @@ app.post("/api/admin/reset", async (req, res) => {
 app.use("/api/finance", financeRoutes);
 app.use("/api/inventory", inventoryRoutes);
 
-// ✅ DEBUG: quick check to confirm deploy + schema (always available)
-app.get("/api/debug/schema", async (req, res) => {
-  try {
-    const { rows } = await pool.query(`
-      SELECT table_name, column_name, data_type
-      FROM information_schema.columns
-      WHERE table_schema='public'
-      AND table_name IN ('products','losses','stock_movements')
-      ORDER BY table_name, ordinal_position
-    `);
-    res.json({ ok: true, columns: rows });
-  } catch (e) {
-    console.error("DEBUG SCHEMA ERROR:", e);
-    res.status(500).json({ error: e.message || "debug failed" });
-  }
-});
-
 /**
  * 404 handler
  */
@@ -225,18 +214,10 @@ app.use((req, res) => {
 
 /**
  * Error handler
- * ✅ If CORS blocks, return 403 (not 500) so debugging is clearer.
  */
 app.use((err, req, res, next) => {
-  const msg = String(err?.message || "Server error");
-
-  if (msg.startsWith("CORS blocked for origin:")) {
-    console.error("CORS ERROR:", msg);
-    return res.status(403).json({ error: msg });
-  }
-
   console.error("SERVER ERROR:", err);
-  res.status(500).json({ error: msg });
+  res.status(500).json({ error: err.message || "Server error" });
 });
 
 const PORT = process.env.PORT || 5000;
