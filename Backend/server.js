@@ -199,6 +199,23 @@ app.post("/api/admin/reset", async (req, res) => {
 app.use("/api/finance", financeRoutes);
 app.use("/api/inventory", inventoryRoutes);
 
+// ✅ DEBUG: quick check to confirm deploy + schema (always available)
+app.get("/api/debug/schema", async (req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT table_name, column_name, data_type
+      FROM information_schema.columns
+      WHERE table_schema='public'
+      AND table_name IN ('products','losses','stock_movements')
+      ORDER BY table_name, ordinal_position
+    `);
+    res.json({ ok: true, columns: rows });
+  } catch (e) {
+    console.error("DEBUG SCHEMA ERROR:", e);
+    res.status(500).json({ error: e.message || "debug failed" });
+  }
+});
+
 /**
  * 404 handler
  */
