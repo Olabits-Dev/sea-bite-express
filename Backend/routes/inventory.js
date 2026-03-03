@@ -3,27 +3,17 @@ const router = express.Router();
 const { pool } = require("../db");
 
 /**
- * ✅ Migration-safe schema
- * - Works even if tables already exist with older columns
+ * ✅ Schema hardening (works with older DBs)
+ * Goal: keep your main features working even if legacy columns exist/missing.
  */
 async function ensureSchema() {
   // ---------- PRODUCTS ----------
-  await pool.query(`
-    ALTER TABLE products
-    ADD COLUMN IF NOT EXISTS category TEXT DEFAULT 'KITCHEN'
-  `);
-
-  await pool.query(`
-    ALTER TABLE products
-    ADD COLUMN IF NOT EXISTS portion_size NUMERIC
-  `);
-
-  await pool.query(`
-    ALTER TABLE products
-    ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW()
-  `);
+  await pool.query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS category TEXT DEFAULT 'KITCHEN'`);
+  await pool.query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS portion_size NUMERIC`);
+  await pool.query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW()`);
 
   // ---------- LOSSES ----------
+  // Create if missing
   await pool.query(`
     CREATE TABLE IF NOT EXISTS losses (
       id SERIAL PRIMARY KEY,
@@ -35,41 +25,43 @@ async function ensureSchema() {
     )
   `);
 
-  // If an older losses table exists with different columns, add missing ones.
+  // Harden legacy tables (these will no-op if columns exist)
   await pool.query(`ALTER TABLE losses ADD COLUMN IF NOT EXISTS qty NUMERIC`);
+  await pool.query(`ALTER TABLE losses ADD COLUMN IF NOT EXISTS qty_lost NUMERIC`);
   await pool.query(`ALTER TABLE losses ADD COLUMN IF NOT EXISTS reason TEXT`);
   await pool.query(`ALTER TABLE losses ADD COLUMN IF NOT EXISTS note TEXT DEFAULT ''`);
   await pool.query(`ALTER TABLE losses ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW()`);
-
-  // Some old schemas used qty_lost — keep compatibility (read via COALESCE later)
-  await pool.query(`ALTER TABLE losses ADD COLUMN IF NOT EXISTS qty_lost NUMERIC`);
 
   // ---------- STOCK MOVEMENTS ----------
   await pool.query(`
     CREATE TABLE IF NOT EXISTS stock_movements (
       id SERIAL PRIMARY KEY,
       product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
-      type TEXT NOT NULL,               -- IN | OUT | LOSS
-      qty_change NUMERIC NOT NULL,      -- positive or negative delta
-      mode TEXT DEFAULT 'QTY',          -- QTY | PORTION
+      type TEXT NOT NULL,
+      qty_change NUMERIC NOT NULL,
+      mode TEXT DEFAULT 'QTY',
       note TEXT DEFAULT '',
       created_at TIMESTAMPTZ DEFAULT NOW()
     )
   `);
 
-  // If an older stock_movements exists, add missing columns (THIS FIXES “Move failed”)
+  // Harden legacy
   await pool.query(`ALTER TABLE stock_movements ADD COLUMN IF NOT EXISTS mode TEXT DEFAULT 'QTY'`);
   await pool.query(`ALTER TABLE stock_movements ADD COLUMN IF NOT EXISTS note TEXT DEFAULT ''`);
   await pool.query(`ALTER TABLE stock_movements ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW()`);
 
-  // ---------- DUPLICATE SYNC PROTECTION ----------
+  // ---------- Duplicate prevention ----------
+  // Prevent SEAFOOD duplicates after sync (idempotent create by name+category)
   await pool.query(`
     CREATE UNIQUE INDEX IF NOT EXISTS unique_product_name_category
     ON products (LOWER(name), UPPER(category))
   `);
 }
 
-// Ensure schema before every request
+// Run once at boot (better than waiting for first request)
+ensureSchema().catch((e) => console.error("Initial ensureSchema failed:", e));
+
+// Also ensure per request (safe)
 router.use(async (req, res, next) => {
   try {
     await ensureSchema();
@@ -80,29 +72,25 @@ router.use(async (req, res, next) => {
   }
 });
 
+// -------- helpers ----------
 function normCategory(v) {
   const s = String(v || "KITCHEN").trim().toUpperCase();
   return s === "SEAFOOD" ? "SEAFOOD" : "KITCHEN";
 }
-
 function toNumber(v, fallback = 0) {
   const n = Number(v);
   return Number.isFinite(n) ? n : fallback;
 }
-
 function isPositive(n) {
   return Number.isFinite(n) && n > 0;
 }
-
 function isNonNeg(n) {
   return Number.isFinite(n) && n >= 0;
 }
-
 function effectivePortionSize(product) {
   const ps = toNumber(product?.portion_size, 0);
   return ps > 0 ? ps : 0;
 }
-
 function csvEscape(value) {
   const s = String(value ?? "");
   if (/[",\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
@@ -110,7 +98,89 @@ function csvEscape(value) {
 }
 
 /**
- * GET all products
+ * ✅ NON-FATAL logging insert
+ * If movement log fails due to schema mismatch, do NOT fail the request.
+ */
+async function tryInsertMovement({ product_id, type, qty_change, mode, note }) {
+  // Try modern schema
+  try {
+    await pool.query(
+      `INSERT INTO stock_movements (product_id, type, qty_change, mode, note) VALUES ($1,$2,$3,$4,$5)`,
+      [product_id, type, qty_change, mode || "QTY", note || ""]
+    );
+    return true;
+  } catch (e1) {
+    console.error("stock_movements insert failed (modern):", e1.message);
+
+    // Try legacy schema without mode (if old table lacks it)
+    try {
+      await pool.query(
+        `INSERT INTO stock_movements (product_id, type, qty_change, note) VALUES ($1,$2,$3,$4)`,
+        [product_id, type, qty_change, note || ""]
+      );
+      return true;
+    } catch (e2) {
+      console.error("stock_movements insert failed (legacy):", e2.message);
+      return false; // swallow
+    }
+  }
+}
+
+/**
+ * ✅ LOSS insert with fallback for older schemas
+ * Some DBs had qty_lost only.
+ */
+async function insertLossRow({ product_id, qty, reason, note }) {
+  // Try modern insert (qty + qty_lost)
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO losses (product_id, qty, qty_lost, reason, note, created_at)
+       VALUES ($1,$2,$2,$3,$4,NOW())
+       RETURNING *`,
+      [product_id, qty, reason, note || ""]
+    );
+    return rows[0];
+  } catch (e1) {
+    console.error("losses insert failed (modern):", e1.message);
+
+    // Try legacy insert (qty_lost only)
+    try {
+      const { rows } = await pool.query(
+        `INSERT INTO losses (product_id, qty_lost, reason, note, created_at)
+         VALUES ($1,$2,$3,$4,NOW())
+         RETURNING *`,
+        [product_id, qty, reason, note || ""]
+      );
+      return rows[0];
+    } catch (e2) {
+      console.error("losses insert failed (legacy):", e2.message);
+      throw e2; // this one is fatal (loss itself must exist)
+    }
+  }
+}
+
+/**
+ * ✅ DEBUG endpoint (use this in Render to confirm columns exist)
+ * GET /api/inventory/debug/schema
+ */
+router.get("/debug/schema", async (req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT table_name, column_name, data_type
+      FROM information_schema.columns
+      WHERE table_schema='public'
+      AND table_name IN ('products','losses','stock_movements')
+      ORDER BY table_name, ordinal_position
+    `);
+    res.json({ ok: true, columns: rows });
+  } catch (e) {
+    console.error("debug/schema error:", e);
+    res.status(500).json({ error: e.message || "debug failed" });
+  }
+});
+
+/**
+ * GET /products
  */
 router.get("/products", async (req, res) => {
   try {
@@ -132,8 +202,8 @@ router.get("/products", async (req, res) => {
 });
 
 /**
- * CREATE product (sync-safe)
- * If same name+category already exists, return it instead of creating another row.
+ * POST /products
+ * ✅ idempotent: same (name+category) returns existing to prevent duplicates on sync
  */
 router.post("/products", async (req, res) => {
   try {
@@ -159,7 +229,7 @@ router.post("/products", async (req, res) => {
       unit = unit || "pcs";
     }
 
-    // ✅ idempotent: return existing instead of creating duplicate (fixes seafood duplication)
+    // idempotent create
     const existing = await pool.query(
       `SELECT
          id, name, sku, unit, qty, reorder_level,
@@ -170,11 +240,7 @@ router.post("/products", async (req, res) => {
        LIMIT 1`,
       [name, category]
     );
-
-    if (existing.rows.length) {
-      // optional: if initial_qty provided and existing qty is 0, you could choose to stock in.
-      return res.json(existing.rows[0]);
-    }
+    if (existing.rows.length) return res.json(existing.rows[0]);
 
     const { rows } = await pool.query(
       `
@@ -192,15 +258,14 @@ router.post("/products", async (req, res) => {
       [name, sku || null, unit, initial_qty, reorder_level, category, portion_size]
     );
 
-    // log initial stock move
     if (initial_qty > 0) {
-      await pool.query(
-        `
-        INSERT INTO stock_movements (product_id, type, qty_change, mode, note)
-        VALUES ($1, 'IN', $2, 'QTY', $3)
-        `,
-        [rows[0].id, initial_qty, "Initial stock in"]
-      );
+      await tryInsertMovement({
+        product_id: rows[0].id,
+        type: "IN",
+        qty_change: initial_qty,
+        mode: "QTY",
+        note: "Initial stock in",
+      });
     }
 
     res.json(rows[0]);
@@ -211,7 +276,7 @@ router.post("/products", async (req, res) => {
 });
 
 /**
- * UPDATE product
+ * PUT /products/:id
  */
 router.put("/products/:id", async (req, res) => {
   try {
@@ -265,7 +330,7 @@ router.put("/products/:id", async (req, res) => {
 });
 
 /**
- * DELETE product
+ * DELETE /products/:id
  */
 router.delete("/products/:id", async (req, res) => {
   try {
@@ -283,9 +348,9 @@ router.delete("/products/:id", async (req, res) => {
 });
 
 /**
- * STOCK MOVE
  * POST /products/:id/move
- * Body: { type: "IN"|"OUT", qty: number, mode?: "QTY"|"PORTION", note?: string }
+ * ✅ Main update is authoritative.
+ * ✅ Logging failure will NOT cause 500 anymore.
  */
 router.post("/products/:id/move", async (req, res) => {
   try {
@@ -336,15 +401,16 @@ router.post("/products/:id/move", async (req, res) => {
       [newQty, id]
     );
 
-    // ✅ This used to fail in old DBs if "mode" column didn't exist — now ensureSchema adds it.
-    await pool.query(
-      `
-      INSERT INTO stock_movements (product_id, type, qty_change, mode, note)
-      VALUES ($1, $2, $3, $4, $5)
-      `,
-      [id, typeRaw, qtyChange, (category === "SEAFOOD" ? modeRaw : "QTY"), note]
-    );
+    // ✅ Non-fatal movement log
+    await tryInsertMovement({
+      product_id: id,
+      type: typeRaw,
+      qty_change: qtyChange,
+      mode: category === "SEAFOOD" ? modeRaw : "QTY",
+      note,
+    });
 
+    // ✅ Always return success if product update succeeded
     res.json(updated[0]);
   } catch (e) {
     console.error("POST /products/:id/move error:", e);
@@ -353,11 +419,9 @@ router.post("/products/:id/move", async (req, res) => {
 });
 
 /**
- * LOSS RECORD
  * POST /products/:id/loss
- * Body: { qty, reason, note?, mode? }
- *
- * ✅ Returns: { ok:true, loss: {...} }  (matches script.js expectations)
+ * ✅ Loss + product qty update is authoritative.
+ * ✅ Movement logging failure is NOT fatal.
  */
 router.post("/products/:id/loss", async (req, res) => {
   try {
@@ -395,26 +459,22 @@ router.post("/products/:id/loss", async (req, res) => {
 
     await pool.query(`UPDATE products SET qty=$1, updated_at=NOW() WHERE id=$2`, [newQty, id]);
 
-    // ✅ Insert into BOTH qty and qty_lost for maximum compatibility
-    const { rows: lossRows } = await pool.query(
-      `
-      INSERT INTO losses (product_id, qty, qty_lost, reason, note, created_at)
-      VALUES ($1, $2, $2, $3, $4, NOW())
-      RETURNING *
-      `,
-      [id, lossQty, reason, note]
-    );
+    const lossRow = await insertLossRow({
+      product_id: id,
+      qty: lossQty,
+      reason,
+      note,
+    });
 
-    // Log movement (won’t fail now because ensureSchema adds missing columns)
-    await pool.query(
-      `
-      INSERT INTO stock_movements (product_id, type, qty_change, mode, note)
-      VALUES ($1, 'LOSS', $2, $3, $4)
-      `,
-      [id, -lossQty, (category === "SEAFOOD" ? modeRaw : "QTY"), note || reason]
-    );
+    await tryInsertMovement({
+      product_id: id,
+      type: "LOSS",
+      qty_change: -lossQty,
+      mode: category === "SEAFOOD" ? modeRaw : "QTY",
+      note: note || reason,
+    });
 
-    res.json({ ok: true, loss: lossRows[0] });
+    res.json({ ok: true, loss: lossRow });
   } catch (e) {
     console.error("POST /products/:id/loss error:", e);
     res.status(500).json({ error: "Loss failed" });
@@ -422,9 +482,9 @@ router.post("/products/:id/loss", async (req, res) => {
 });
 
 /**
- * GET losses
- * ✅ Includes product_category so other users can see it correctly split
- * ✅ Uses COALESCE(qty, qty_lost) so old rows still show
+ * GET /losses
+ * ✅ Includes product_category for frontend split tables
+ * ✅ COALESCE qty/qty_lost so legacy rows show for all users
  */
 router.get("/losses", async (req, res) => {
   try {
@@ -453,7 +513,7 @@ router.get("/losses", async (req, res) => {
 });
 
 /**
- * UPDATE loss
+ * PUT /losses/:id
  */
 router.put("/losses/:id", async (req, res) => {
   try {
@@ -489,7 +549,7 @@ router.put("/losses/:id", async (req, res) => {
 });
 
 /**
- * DELETE loss
+ * DELETE /losses/:id
  */
 router.delete("/losses/:id", async (req, res) => {
   try {
