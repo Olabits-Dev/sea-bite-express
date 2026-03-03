@@ -150,9 +150,11 @@ async function setQueueUI() {
  ***********************/
 const DB_NAME = "seabite_offline_db";
 /**
- * ⬇️ bumped to 4 because we added new product fields (category/portion_size)
+ * ✅ bumped to 5
+ * Reason: reset previously only "putMany([])" which doesn't clear IDB.
+ * We now support true clears and cache/SW purge.
  */
-const DB_VERSION = 4;
+const DB_VERSION = 5;
 
 function openDB() {
   return new Promise((resolve, reject) => {
@@ -827,7 +829,7 @@ async function addProduct() {
   const category = normalizeCategory(getVal("pCategory"));
   const unit = cleanStr(getVal("pUnit")) || "pcs";
   const reorder_level = toNumber(getVal("pReorder"), 0);
-  const portion_size = toNumber(getVal("pPortionSize"), 0); // qty per 1 portion (seafood only)
+  const portion_size = toNumber(getVal("pPortionSize"), 0);
 
   if (!name) return alert("Product name is required.");
 
@@ -983,30 +985,41 @@ async function deleteProduct(id) {
 }
 
 /**
- * ✅ Stock move:
- * - Seafood: choose Quantity or Portion; sync both.
- * - Kitchen: Quantity only.
+ * ✅ FIX: Send correct qty + mode to backend for SEAFOOD.
+ * Your backend supports: { type, qty, mode, note }
+ * - If user chooses PORTION: send qty as "portion amount" and mode="PORTION"
+ * - If user chooses QTY: send qty as quantity and mode="QTY"
+ *
+ * This prevents future mismatch and keeps server logs clean.
  */
 async function stockMove(productId, type) {
   const p = products.find(x => String(x.id) === String(productId));
   if (!p) return alert("Product not found.");
 
+  // ✅ If row is still a tmp id (not yet saved to server), prevent actions that will fail server-side
+  if (String(p.id).startsWith("tmp-")) {
+    return alert("This product is not yet saved on the server. Please go online and click Sync Now, then try again.");
+  }
+
   const note = prompt("Note (optional):", "") ?? "";
 
-  let deltaQty = 0;
+  let mode = "QTY";
+  let qtyToSend = 0;     // what we send to server
+  let deltaQty = 0;      // qty effect for optimistic UI
   let label = "";
 
   if (p.category === "SEAFOOD") {
-    const mode = prompt("Stock by: QTY or PORTION?", "QTY");
-    if (mode === null) return;
-    const m = String(mode).trim().toUpperCase();
+    const modeRaw = prompt("Stock by: QTY or PORTION?", "QTY");
+    if (modeRaw === null) return;
+    mode = String(modeRaw).trim().toUpperCase() === "PORTION" ? "PORTION" : "QTY";
 
-    if (m === "PORTION") {
+    if (mode === "PORTION") {
       const portionRaw = prompt(`Enter PORTION to Stock ${type}:`, "1");
       if (portionRaw === null) return;
       const portion = toNumber(portionRaw, 0);
       if (!isValidQty(portion)) return alert("Portion must be > 0");
 
+      qtyToSend = portion; // server will multiply by portion_size
       deltaQty = calcQtyFromPortion(portion, p.portion_size);
       label = `${round2(portion)} portion`;
     } else {
@@ -1015,6 +1028,7 @@ async function stockMove(productId, type) {
       const qty = toNumber(qtyRaw, 0);
       if (!isValidQty(qty)) return alert("Quantity must be > 0");
 
+      qtyToSend = qty;
       deltaQty = qty;
       label = `${round2(qty)} qty`;
     }
@@ -1023,6 +1037,8 @@ async function stockMove(productId, type) {
     if (qtyRaw === null) return;
     const qty = toNumber(qtyRaw, 0);
     if (!isValidQty(qty)) return alert("Quantity must be > 0");
+    mode = "QTY";
+    qtyToSend = qty;
     deltaQty = qty;
     label = `${round2(qty)} ${p.unit || ""}`.trim();
   }
@@ -1048,7 +1064,8 @@ async function stockMove(productId, type) {
       method: "POST",
       body: JSON.stringify({
         type,
-        qty: deltaQty,
+        qty: qtyToSend,
+        mode,
         note: note ? `${note} (${label})` : `(${label})`
       })
     }
@@ -1062,42 +1079,61 @@ async function stockMove(productId, type) {
   }
 }
 
+/**
+ * ✅ FIX: Send correct qty + mode to backend for SEAFOOD loss.
+ * Backend supports: { qty, reason, note, mode }
+ */
 async function recordLoss(productId, reason) {
   const p = products.find(x => String(x.id) === String(productId));
   if (!p) return alert("Product not found.");
 
-  let qty = 0;
+  if (String(p.id).startsWith("tmp-")) {
+    return alert("This product is not yet saved on the server. Please go online and click Sync Now, then try again.");
+  }
+
+  let mode = "QTY";
+  let qtyToSend = 0;
+  let deltaQty = 0;
 
   if (p.category === "SEAFOOD") {
-    const mode = prompt("Loss by: QTY or PORTION?", "QTY");
-    if (mode === null) return;
-    const m = String(mode).trim().toUpperCase();
+    const modeRaw = prompt("Loss by: QTY or PORTION?", "QTY");
+    if (modeRaw === null) return;
+    mode = String(modeRaw).trim().toUpperCase() === "PORTION" ? "PORTION" : "QTY";
 
-    if (m === "PORTION") {
+    if (mode === "PORTION") {
       const portionRaw = prompt(`Enter PORTION for ${reason}:`, "1");
       if (portionRaw === null) return;
       const portion = toNumber(portionRaw, 0);
       if (!isValidQty(portion)) return alert("Portion must be > 0");
-      qty = calcQtyFromPortion(portion, p.portion_size);
+
+      qtyToSend = portion; // server will multiply by portion_size
+      deltaQty = calcQtyFromPortion(portion, p.portion_size);
     } else {
       const qtyRaw = prompt(`Enter QUANTITY for ${reason}:`, "1");
       if (qtyRaw === null) return;
-      qty = toNumber(qtyRaw, 0);
+      const qty = toNumber(qtyRaw, 0);
       if (!isValidQty(qty)) return alert("Quantity must be > 0");
+
+      qtyToSend = qty;
+      deltaQty = qty;
     }
   } else {
     const qtyRaw = prompt(`Enter quantity for ${reason}:`, "1");
     if (qtyRaw === null) return;
-    qty = toNumber(qtyRaw, 0);
+    const qty = toNumber(qtyRaw, 0);
     if (!isValidQty(qty)) return alert("Quantity must be > 0");
+
+    mode = "QTY";
+    qtyToSend = qty;
+    deltaQty = qty;
   }
 
   const note = prompt("Note (optional):", "") ?? "";
 
-  if (toNumber(p.qty, 0) - qty < 0) return alert("Insufficient stock.");
+  if (toNumber(p.qty, 0) - deltaQty < 0) return alert("Insufficient stock.");
 
   // optimistic product update
-  p.qty = toNumber(p.qty, 0) - qty;
+  p.qty = toNumber(p.qty, 0) - deltaQty;
   if (p.category === "SEAFOOD") p.portion = round2(calcPortionFromQty(p.qty, p.portion_size));
   p.updated_at = new Date().toISOString();
   await idbPut("products", p);
@@ -1108,7 +1144,7 @@ async function recordLoss(productId, reason) {
     product_id: Number(productId),
     product_name: p.name,
     product_unit: p.unit || "",
-    qty,
+    qty: deltaQty, // store actual qty removed for UI display
     reason: String(reason || "").toUpperCase(),
     note,
     created_at: new Date().toISOString()
@@ -1123,7 +1159,7 @@ async function recordLoss(productId, reason) {
   const result = await apiOrQueue({
     kind: "stock_loss",
     path: `/api/inventory/products/${productId}/loss`,
-    options: { method: "POST", body: JSON.stringify({ qty, reason, note }) }
+    options: { method: "POST", body: JSON.stringify({ qty: qtyToSend, reason, note, mode }) }
   });
 
   if (navigator.onLine && !result.ok) {
@@ -1519,7 +1555,7 @@ function initAdminReset() {
         body: JSON.stringify({ token })
       });
 
-      // ✅ 2) HARD CLEAR OFFLINE CACHE + QUEUE (THIS FIXES OLD DATA STILL SHOWING)
+      // ✅ 2) HARD CLEAR OFFLINE CACHE + QUEUE
       await hardClearOfflineData();
 
       // ✅ 3) CLEAR IN-MEMORY ARRAYS (UI)
@@ -1543,7 +1579,7 @@ function initAdminReset() {
 
       alert("✅ Database reset completed. Offline cache cleared.");
 
-      // Optional: full refresh to ensure fresh assets if SW was active
+      // Optional hard refresh if you want brand new assets after SW purge:
       // location.reload();
     } catch (e) {
       const payload = e.data || { error: e.message };
