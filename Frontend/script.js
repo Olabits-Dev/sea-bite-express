@@ -1855,17 +1855,15 @@ function initSeaBiteSidebarNavigation() {
     if (sidebarOverlay) sidebarOverlay.classList.add("show");
   }
 
-  menuToggle.addEventListener("click", () => {
-    if (isMobileView()) {
-      if (sidebar.classList.contains("open")) {
-        closeMobileSidebar();
-      } else {
-        openMobileSidebar();
-      }
-    } else {
-      sidebar.classList.toggle("collapsed");
-    }
-  });
+ menuToggle.addEventListener('click', () => {
+
+  if(window.innerWidth <= 980){
+    sidebar.classList.toggle("open");
+  }else{
+    sidebar.classList.toggle("closed");
+  }
+
+});
 
   if (sidebarOverlay) {
     sidebarOverlay.addEventListener("click", closeMobileSidebar);
