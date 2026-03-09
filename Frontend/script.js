@@ -1863,3 +1863,31 @@ $("installBtn")?.addEventListener("click", () => {
 setNetUI();
 initAdminReset();
 loadAll();
+
+/***********************
+ * UI NAVIGATION UPGRADE
+ ***********************/
+(function initSeaBiteSidebarNavigation() {
+  const sidebar = document.getElementById('sidebar');
+  const menuToggle = document.getElementById('menuToggle');
+  if (menuToggle && sidebar) {
+    menuToggle.addEventListener('click', () => sidebar.classList.toggle('open'));
+  }
+
+  document.querySelectorAll('.nav-item[data-scroll]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.nav-item').forEach((item) => item.classList.remove('active'));
+      btn.classList.add('active');
+
+      const targetId = btn.getAttribute('data-scroll');
+      const target = document.getElementById(targetId);
+      if (target) {
+        target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+
+      if (sidebar && window.innerWidth <= 980) {
+        sidebar.classList.remove('open');
+      }
+    });
+  });
+})();
