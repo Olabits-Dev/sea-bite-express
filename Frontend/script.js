@@ -1,7 +1,7 @@
 /***********************
  * CONFIG
  ***********************/
-const PROD_API_BASE = "https://sea-bite-express.onrender.com"; // ✅ backend
+const PROD_API_BASE = "https://sea-bite-express.onrender.com";
 const API_BASE = (() => {
   const host = window.location.hostname;
   const isLocal = host === "localhost" || host === "127.0.0.1" || host.endsWith(".local");
@@ -61,7 +61,6 @@ function isNumericString(v) {
   return Number.isFinite(Number(s));
 }
 
-// Seafood conversions (for display + optimistic update)
 function calcPortionFromQty(qty, portionSize) {
   const ps = Number(portionSize) || 0;
   if (ps <= 0) return 0;
@@ -81,7 +80,6 @@ function normKey(s) {
   return String(s ?? "").trim().toLowerCase().replace(/\s+/g, " ");
 }
 
-// Match products across tmp/server
 function productMatchKey(p) {
   return [
     normKey(p.name),
@@ -90,7 +88,6 @@ function productMatchKey(p) {
   ].join("|");
 }
 
-// Loose matching for losses so TMP can be removed once server version arrives
 function isSameLoss(tmp, srv) {
   const tmpPid = String(tmp.product_id ?? "");
   const srvPid = String(srv.product_id ?? "");
@@ -108,13 +105,9 @@ function isSameLoss(tmp, srv) {
   const t2 = new Date(srv.created_at || srv.date || 0).getTime();
   if (!t1 || !t2) return false;
 
-  // within 10 minutes = same loss
   return Math.abs(t1 - t2) <= 10 * 60 * 1000;
 }
 
-/**
- * ✅ FIXED: mailto needs to be triggered directly from a user action.
- */
 function openMailto(to, subject, body) {
   const url = `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
 
@@ -190,10 +183,10 @@ async function setQueueUI() {
 }
 
 /***********************
- * IndexedDB (offline queue + cached data)
+ * IndexedDB
  ***********************/
 const DB_NAME = "seabite_offline_db";
-const DB_VERSION = 8; // ✅ bump (changed queue payload rules)
+const DB_VERSION = 8;
 
 function openDB() {
   return new Promise((resolve, reject) => {
@@ -265,7 +258,7 @@ async function idbClear(store) {
 }
 
 /***********************
- * ✅ HARD CLEAR HELPERS
+ * HARD CLEAR HELPERS
  ***********************/
 async function hardClearOfflineData() {
   const stores = ["queue", "sales", "expenses", "products", "losses"];
@@ -329,7 +322,6 @@ async function api(path, options = {}) {
     if (contentType.includes("application/json")) {
       data = await res.json();
     } else {
-      // handle text/plain or empty body safely
       const text = await res.text().catch(() => "");
       data = text ? { message: text } : {};
     }
@@ -348,9 +340,6 @@ async function api(path, options = {}) {
   return data;
 }
 
-/**
- * ✅ Queue ONLY when it's a real offline/network issue.
- */
 async function apiOrQueue(action) {
   try {
     if (!navigator.onLine) throw Object.assign(new Error("offline"), { isOffline: true });
@@ -366,7 +355,6 @@ async function apiOrQueue(action) {
       return { ok: false, queued: true, error: e.message };
     }
 
-    // Server rejected — do NOT queue
     return { ok: false, queued: false, error: e.message, status: e.status, data: e.data };
   }
 }
@@ -381,8 +369,6 @@ let sales = [];
 let expenses = [];
 let products = [];
 let losses = [];
-
-// pendingUsage stores BASE qty (what stock uses), but UI uses portions for seafood
 let pendingUsage = [];
 
 /***********************
@@ -656,7 +642,7 @@ function saveUsage() {
 
     next.push({
       product_id: pid,
-      qty_used: qty_used_base, // BASE qty
+      qty_used: qty_used_base,
       display_qty,
       display_unit
     });
@@ -780,7 +766,7 @@ async function addSale() {
       const p = products.find(x => Number(x.id) === Number(it.product_id));
       return {
         product_id: it.product_id,
-        qty_used: it.qty_used, // BASE qty
+        qty_used: it.qty_used,
         product_name: p?.name || "",
         product_unit: p?.unit || ""
       };
@@ -1031,7 +1017,6 @@ async function addProduct() {
 
   if (!name) return alert("Product name is required.");
 
-  // ✅ Kitchen swap UX: if Unit field is numeric, treat it as initial qty
   let initial_qty_guess = null;
   if (category === "KITCHEN" && isNumericString(unit)) {
     initial_qty_guess = toNumber(unit, 0);
@@ -1211,13 +1196,6 @@ async function deleteProduct(id) {
   }
 }
 
-/**
- * ✅ IMPORTANT FIX:
- * For move/loss:
- * - Send qty as USER INPUT (portion or qty)
- * - Send mode to let backend convert.
- * Local optimistic update still uses BASE delta.
- */
 async function stockMove(productId, type) {
   const p = products.find(x => String(x.id) === String(productId));
   if (!p) return alert("Product not found.");
@@ -1226,8 +1204,8 @@ async function stockMove(productId, type) {
   const note = prompt("Note (optional):", "") ?? "";
 
   let mode = "QTY";
-  let inputQty = 0;   // what user entered (portion or qty)
-  let deltaQtyBase = 0; // BASE qty for optimistic local qty update
+  let inputQty = 0;
+  let deltaQtyBase = 0;
   let label = "";
 
   if (normalizeCategory(p.category) === "SEAFOOD") {
@@ -1266,7 +1244,6 @@ async function stockMove(productId, type) {
   const nextQty = type === "IN" ? (toNumber(p.qty, 0) + deltaQtyBase) : (toNumber(p.qty, 0) - deltaQtyBase);
   if (type === "OUT" && nextQty < 0) return alert("Insufficient stock.");
 
-  // optimistic update
   p.qty = nextQty;
   if (normalizeCategory(p.category) === "SEAFOOD") p.portion = round2(calcPortionFromQty(p.qty, p.portion_size));
   p.updated_at = new Date().toISOString();
@@ -1275,7 +1252,6 @@ async function stockMove(productId, type) {
   renderProductsTables();
   renderUsageSummary();
 
-  // ✅ Send qty as USER INPUT (not base)
   const payload = {
     type,
     qty: inputQty,
@@ -1308,8 +1284,8 @@ async function recordLoss(productId, reason) {
   if (isTmpId(p.id)) return alert("This product is saved offline but not yet synced. Go online and click Sync Now, then try again.");
 
   let mode = "QTY";
-  let inputQty = 0;      // user entered
-  let deltaQtyBase = 0;  // base qty for optimistic local qty update
+  let inputQty = 0;
+  let deltaQtyBase = 0;
 
   if (normalizeCategory(p.category) === "SEAFOOD") {
     const modeRaw = prompt("Loss by: QTY or PORTION?", "PORTION");
@@ -1344,19 +1320,17 @@ async function recordLoss(productId, reason) {
   const note = prompt("Note (optional):", "") ?? "";
   if (toNumber(p.qty, 0) - deltaQtyBase < 0) return alert("Insufficient stock.");
 
-  // optimistic product update
   p.qty = toNumber(p.qty, 0) - deltaQtyBase;
   if (normalizeCategory(p.category) === "SEAFOOD") p.portion = round2(calcPortionFromQty(p.qty, p.portion_size));
   p.updated_at = new Date().toISOString();
   await idbPut("products", p);
 
-  // optimistic loss entry (store BASE qty in `qty`)
   const tmpLoss = {
     id: `tmp-${Date.now()}`,
     product_id: Number(productId),
     product_name: p.name,
     product_unit: p.unit || "",
-    qty: deltaQtyBase, // BASE stored locally
+    qty: deltaQtyBase,
     reason: String(reason || "").toUpperCase(),
     note,
     created_at: new Date().toISOString(),
@@ -1370,7 +1344,6 @@ async function recordLoss(productId, reason) {
   renderUsageSummary();
   renderLossTables();
 
-  // ✅ Send qty as USER INPUT (not base)
   const payload = {
     qty: inputQty,
     reason,
@@ -1398,7 +1371,7 @@ async function recordLoss(productId, reason) {
 }
 
 /***********************
- * LOSS TABLES (split)
+ * LOSS TABLES
  ***********************/
 function renderLossTables() {
   const seafoodBody = $("seafoodLossTable");
@@ -1858,36 +1831,75 @@ $("installBtn")?.addEventListener("click", () => {
 });
 
 /***********************
+ * SIDEBAR / NAVIGATION
+ ***********************/
+function initSeaBiteSidebarNavigation() {
+  const sidebar = $("sidebar");
+  const menuToggle = $("menuToggle");
+  const sidebarOverlay = $("sidebarOverlay");
+  const navItems = document.querySelectorAll(".nav-item[data-scroll]");
+
+  if (!sidebar || !menuToggle) return;
+
+  function isMobileView() {
+    return window.innerWidth <= 900;
+  }
+
+  function closeMobileSidebar() {
+    sidebar.classList.remove("open");
+    if (sidebarOverlay) sidebarOverlay.classList.remove("show");
+  }
+
+  function openMobileSidebar() {
+    sidebar.classList.add("open");
+    if (sidebarOverlay) sidebarOverlay.classList.add("show");
+  }
+
+  menuToggle.addEventListener("click", () => {
+    if (isMobileView()) {
+      if (sidebar.classList.contains("open")) {
+        closeMobileSidebar();
+      } else {
+        openMobileSidebar();
+      }
+    } else {
+      sidebar.classList.toggle("collapsed");
+    }
+  });
+
+  if (sidebarOverlay) {
+    sidebarOverlay.addEventListener("click", closeMobileSidebar);
+  }
+
+  navItems.forEach((btn) => {
+    btn.addEventListener("click", () => {
+      navItems.forEach((item) => item.classList.remove("active"));
+      btn.classList.add("active");
+
+      const targetId = btn.getAttribute("data-scroll");
+      const targetEl = document.getElementById(targetId);
+
+      if (targetEl) {
+        targetEl.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+
+      if (isMobileView()) {
+        closeMobileSidebar();
+      }
+    });
+  });
+
+  window.addEventListener("resize", () => {
+    if (!isMobileView()) {
+      closeMobileSidebar();
+    }
+  });
+}
+
+/***********************
  * INIT
  ***********************/
 setNetUI();
 initAdminReset();
+initSeaBiteSidebarNavigation();
 loadAll();
-
-/***********************
- * UI NAVIGATION UPGRADE
- ***********************/
-(function initSeaBiteSidebarNavigation() {
-  const sidebar = document.getElementById('sidebar');
-  const menuToggle = document.getElementById('menuToggle');
-  if (menuToggle && sidebar) {
-    menuToggle.addEventListener('click', () => sidebar.classList.toggle('open'));
-  }
-
-  document.querySelectorAll('.nav-item[data-scroll]').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      document.querySelectorAll('.nav-item').forEach((item) => item.classList.remove('active'));
-      btn.classList.add('active');
-
-      const targetId = btn.getAttribute('data-scroll');
-      const target = document.getElementById(targetId);
-      if (target) {
-        target.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      }
-
-      if (sidebar && window.innerWidth <= 980) {
-        sidebar.classList.remove('open');
-      }
-    });
-  });
-})();

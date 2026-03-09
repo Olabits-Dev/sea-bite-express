@@ -12,26 +12,46 @@
 </head>
 
 <body>
+  <div class="sidebar-overlay" id="sidebarOverlay"></div>
+
   <div class="app-shell">
     <aside class="sidebar" id="sidebar">
       <div class="brand">
         <div class="brand-logo"><i class="fa-solid fa-bowl-food"></i></div>
-        <div>
+        <div class="brand-text">
           <h2>SeaBite Express</h2>
           <p>Business Dashboard</p>
         </div>
       </div>
 
       <nav class="sidebar-nav">
-        <button class="nav-item active" data-scroll="dashboardTop"><i class="fa-solid fa-gauge-high"></i><span>Dashboard</span></button>
-        <button class="nav-item" data-scroll="salesSection"><i class="fa-solid fa-cash-register"></i><span>Sales & Expenses</span></button>
-        <button class="nav-item" data-scroll="reportsSection"><i class="fa-solid fa-chart-pie"></i><span>Reports</span></button>
-        <button class="nav-item" data-scroll="recordsSection"><i class="fa-solid fa-table-list"></i><span>All Records</span></button>
-        <button class="nav-item" data-scroll="inventorySection"><i class="fa-solid fa-boxes-stacked"></i><span>Inventory Setup</span></button>
-        <button class="nav-item" data-scroll="seafoodSection"><i class="fa-solid fa-fish"></i><span>Seafood Stock</span></button>
-        <button class="nav-item" data-scroll="kitchenSection"><i class="fa-solid fa-utensils"></i><span>Kitchen Stock</span></button>
-        <button class="nav-item" data-scroll="lossSection"><i class="fa-solid fa-triangle-exclamation"></i><span>Loss History</span></button>
-        <button class="nav-item" data-scroll="adminPanel"><i class="fa-solid fa-shield-halved"></i><span>Admin</span></button>
+        <button class="nav-item active" data-scroll="dashboardTop">
+          <i class="fa-solid fa-gauge-high"></i><span>Dashboard</span>
+        </button>
+        <button class="nav-item" data-scroll="salesSection">
+          <i class="fa-solid fa-cash-register"></i><span>Sales & Expenses</span>
+        </button>
+        <button class="nav-item" data-scroll="reportsSection">
+          <i class="fa-solid fa-chart-pie"></i><span>Reports</span>
+        </button>
+        <button class="nav-item" data-scroll="recordsSection">
+          <i class="fa-solid fa-table-list"></i><span>All Records</span>
+        </button>
+        <button class="nav-item" data-scroll="inventorySection">
+          <i class="fa-solid fa-boxes-stacked"></i><span>Inventory Setup</span>
+        </button>
+        <button class="nav-item" data-scroll="seafoodSection">
+          <i class="fa-solid fa-fish"></i><span>Seafood Stock</span>
+        </button>
+        <button class="nav-item" data-scroll="kitchenSection">
+          <i class="fa-solid fa-utensils"></i><span>Kitchen Stock</span>
+        </button>
+        <button class="nav-item" data-scroll="lossSection">
+          <i class="fa-solid fa-triangle-exclamation"></i><span>Loss History</span>
+        </button>
+        <button class="nav-item" data-scroll="adminPanel">
+          <i class="fa-solid fa-shield-halved"></i><span>Admin</span>
+        </button>
       </nav>
 
       <div class="sidebar-note">
@@ -40,10 +60,10 @@
       </div>
     </aside>
 
-    <main class="main-content">
+    <main class="main-content" id="mainContent">
       <header class="top-header" id="dashboardTop">
         <div class="header-left">
-          <button class="menu-toggle" id="menuToggle" type="button" aria-label="Open menu">
+          <button class="menu-toggle" id="menuToggle" type="button" aria-label="Toggle sidebar">
             <i class="fa-solid fa-bars"></i>
           </button>
           <div>
@@ -59,19 +79,25 @@
       </header>
 
       <section class="status-strip">
-        <div class="status-pill"><i class="fa-solid fa-wifi"></i><span id="netStatus">Status: Checking...</span></div>
-        <div class="status-pill"><i class="fa-solid fa-clock-rotate-left"></i><span id="queueStatus">Pending: 0</span></div>
+        <div class="status-pill">
+          <i class="fa-solid fa-wifi"></i>
+          <span id="netStatus">Status: Checking...</span>
+        </div>
+        <div class="status-pill">
+          <i class="fa-solid fa-clock-rotate-left"></i>
+          <span id="queueStatus">Pending: 0</span>
+        </div>
       </section>
 
       <section class="hero-card">
         <div class="hero-text">
-          <span class="hero-badge">Seabite Professional Restaurant SaaS </span>
+          <span class="hero-badge">Seabite Professional Restaurant SaaS</span>
           <h2>Manage sales, expenses, inventory, and loss tracking with better visibility.</h2>
           <p>
-           - Add sales and expenses with product usage to track profitability.<br/>
-          - Monitor inventory levels for seafood and kitchen items with auto stock out.<br/>
-           - Record losses due to spoilage or mishandling and analyze trends.<br/>
-          - Generate financial reports and export data for deeper insights.
+            - Add sales and expenses with product usage to track profitability.<br />
+            - Monitor inventory levels for seafood and kitchen items with auto stock out.<br />
+            - Record losses due to spoilage or mishandling and analyze trends.<br />
+            - Generate financial reports and export data for deeper insights.
           </p>
         </div>
 
@@ -86,35 +112,56 @@
       <section class="dashboard-grid quick-overview">
         <div class="dashboard-card quick-card">
           <div class="card-icon green"><i class="fa-solid fa-money-bill-trend-up"></i></div>
-          <div><h3>Finance Tracking</h3><p>Add sales, record expenses, and review performance reports.</p></div>
+          <div>
+            <h3>Finance Tracking</h3>
+            <p>Add sales, record expenses, and review performance reports.</p>
+          </div>
         </div>
+
         <div class="dashboard-card quick-card">
           <div class="card-icon amber"><i class="fa-solid fa-box-open"></i></div>
-          <div><h3>Inventory Control</h3><p>Track seafood and kitchen stock with reorder monitoring.</p></div>
+          <div>
+            <h3>Inventory Control</h3>
+            <p>Track seafood and kitchen stock with reorder monitoring.</p>
+          </div>
         </div>
+
         <div class="dashboard-card quick-card">
           <div class="card-icon red"><i class="fa-solid fa-triangle-exclamation"></i></div>
-          <div><h3>Loss Management</h3><p>Monitor spoilage, waste, and stock-out related losses.</p></div>
+          <div>
+            <h3>Loss Management</h3>
+            <p>Monitor spoilage, waste, and stock-out related losses.</p>
+          </div>
         </div>
+
         <div class="dashboard-card quick-card">
           <div class="card-icon blue"><i class="fa-solid fa-file-export"></i></div>
-          <div><h3>Smart Reporting</h3><p>Generate period reports and export records as CSV.</p></div>
+          <div>
+            <h3>Smart Reporting</h3>
+            <p>Generate period reports and export records as CSV.</p>
+          </div>
         </div>
       </section>
 
-        <!-- ADMIN (Reset Database) -->
-        <div class="report-section modern-card" id="adminPanel" style="display:none;">
-          <div class="card-header">
-            <h2>Admin</h2>
-            <span class="tag red">Restricted</span>
-          </div>
-          <div class="report-actions">
-            <input type="password" id="adminResetToken" placeholder="Enter admin reset token" style="max-width: 360px;" />
-            <button type="button" id="resetDbBtn" class="delete-btn">Reset Database</button>
-          </div>
-          <p class="hint">⚠️ This will delete ALL data (sales, expenses, products, stock movements, losses).</p>
-          <div id="adminStatus" class="status"></div>
+      <div class="report-section modern-card" id="adminPanel" style="display:none;">
+        <div class="card-header">
+          <h2>Admin</h2>
+          <span class="tag red">Restricted</span>
         </div>
+
+        <div class="report-actions">
+          <input
+            type="password"
+            id="adminResetToken"
+            placeholder="Enter admin reset token"
+            style="max-width: 360px;"
+          />
+          <button type="button" id="resetDbBtn" class="delete-btn">Reset Database</button>
+        </div>
+
+        <p class="hint">⚠️ This will delete ALL data (sales, expenses, products, stock movements, losses).</p>
+        <div id="adminStatus" class="status"></div>
+      </div>
 
       <section class="content-section" id="salesSection">
         <div class="section-heading">
@@ -124,7 +171,11 @@
 
         <div class="grid two-col">
           <div class="form-section modern-card">
-            <div class="card-header"><h2>Add Sale</h2><span class="tag green">Revenue</span></div>
+            <div class="card-header">
+              <h2>Add Sale</h2>
+              <span class="tag green">Revenue</span>
+            </div>
+
             <input type="number" id="saleAmount" placeholder="Amount" inputmode="numeric" />
             <input type="text" id="saleDesc" placeholder="Description" />
             <button type="button" class="secondary-btn" onclick="openUsageModal()">Select Products Used</button>
@@ -134,7 +185,11 @@
           </div>
 
           <div class="form-section modern-card">
-            <div class="card-header"><h2>Add Expense</h2><span class="tag amber">Cost</span></div>
+            <div class="card-header">
+              <h2>Add Expense</h2>
+              <span class="tag amber">Cost</span>
+            </div>
+
             <input type="number" id="expenseAmount" placeholder="Amount" inputmode="numeric" />
             <input type="text" id="expenseDesc" placeholder="Description" />
             <button type="button" class="primary-btn" onclick="addExpense()">Add Expense</button>
@@ -164,6 +219,7 @@
               <span>Sales vs Expenses</span>
               <span class="mini-chart-total" id="miniChartTotal"></span>
             </div>
+
             <div class="mini-bars">
               <div class="mini-bar-row">
                 <div class="mini-bar-label">Sales</div>
@@ -185,6 +241,7 @@
           <h2>All Records</h2>
           <p>View every sale and expense entry in one table</p>
         </div>
+
         <div class="table-wrap modern-card">
           <table class="records-table finance-table">
             <colgroup>
@@ -215,42 +272,65 @@
           <h2>Inventory</h2>
           <p>Works offline and syncs automatically</p>
         </div>
+
         <div class="grid two-col">
           <div class="form-section modern-card">
-            <div class="card-header"><h2>Add Product</h2><span class="tag blue">Stock Setup</span></div>
+            <div class="card-header">
+              <h2>Add Product</h2>
+              <span class="tag blue">Stock Setup</span>
+            </div>
+
             <input type="text" id="pName" placeholder="Product name" />
             <input type="text" id="pSku" placeholder="SKU (optional)" />
+
             <select id="pCategory">
               <option value="SEAFOOD">Seafood</option>
               <option value="KITCHEN">Other Kitchen Food</option>
             </select>
+
             <input type="text" id="pUnit" placeholder="Unit (Required for Kitchen items e.g. pcs, kg)" />
-            <input type="number" id="pPortionSize" placeholder="Qty per 1 Portion (Required for Seafood e.g. 2)" inputmode="decimal" />
+            <input
+              type="number"
+              id="pPortionSize"
+              placeholder="Qty per 1 Portion (Required for Seafood e.g. 2)"
+              inputmode="decimal"
+            />
             <input type="number" id="pReorder" placeholder="Reorder level" inputmode="numeric" />
             <button type="button" class="primary-btn" onclick="addProduct()">Add Product</button>
+
             <p class="hint">
-              <strong>IMPORTANT NOTE:</strong><br/>
-              ✅ If category is <strong>Seafood</strong>, you must enter <strong>Qty per 1 Portion</strong> (example: 1 portion = 2kg → enter 2).<br/>
-              ✅ If category is <strong>Other Kitchen Food</strong>, you must enter a <strong>Unit</strong> (example: pcs, kg, packs).<br/>
+              <strong>IMPORTANT NOTE:</strong><br />
+              ✅ If category is <strong>Seafood</strong>, you must enter <strong>Qty per 1 Portion</strong> (example: 1 portion = 2kg → enter 2).<br />
+              ✅ If category is <strong>Other Kitchen Food</strong>, you must enter a <strong>Unit</strong> (example: pcs, kg, packs).<br />
               You’ll be asked for an initial quantity — it will be recorded as Stock IN automatically.
             </p>
           </div>
 
           <div class="form-section modern-card">
-            <div class="card-header"><h2>Inventory Report</h2><span class="tag purple">Export</span></div>
+            <div class="card-header">
+              <h2>Inventory Report</h2>
+              <span class="tag purple">Export</span>
+            </div>
+
             <input type="email" id="invEmail" placeholder="Send inventory CSV to email" />
+
             <div class="report-actions">
               <button type="button" onclick="downloadInventoryCSV()">Download Inventory CSV</button>
               <button type="button" onclick="emailInventoryCSV()">Email Inventory CSV</button>
               <button type="button" onclick="emailInventoryEasy()">Email (Easy)</button>
             </div>
+
             <div id="invStatus" class="status"></div>
           </div>
         </div>
       </section>
 
       <section class="content-section" id="seafoodSection">
-        <div class="section-heading"><h2>Seafood Inventory</h2><p>Quantity ↔ Portion</p></div>
+        <div class="section-heading">
+          <h2>Seafood Inventory</h2>
+          <p>Quantity ↔ Portion</p>
+        </div>
+
         <div class="table-wrap modern-card">
           <table class="records-table inventory-table">
             <colgroup>
@@ -263,7 +343,12 @@
             </colgroup>
             <thead>
               <tr>
-                <th>Name</th><th>SKU</th><th>Quantity</th><th>Portion</th><th>Reorder</th><th class="action-col">Action</th>
+                <th>Name</th>
+                <th>SKU</th>
+                <th>Quantity</th>
+                <th>Portion</th>
+                <th>Reorder</th>
+                <th class="action-col">Action</th>
               </tr>
             </thead>
             <tbody id="seafoodTable"></tbody>
@@ -272,7 +357,11 @@
       </section>
 
       <section class="content-section" id="kitchenSection">
-        <div class="section-heading"><h2>Other Kitchen Food Inventory</h2><p>Quantity + Unit</p></div>
+        <div class="section-heading">
+          <h2>Other Kitchen Food Inventory</h2>
+          <p>Quantity + Unit</p>
+        </div>
+
         <div class="table-wrap modern-card">
           <table class="records-table inventory-table">
             <colgroup>
@@ -285,7 +374,12 @@
             </colgroup>
             <thead>
               <tr>
-                <th>Name</th><th>SKU</th><th>Quantity</th><th>Unit</th><th>Reorder</th><th class="action-col">Action</th>
+                <th>Name</th>
+                <th>SKU</th>
+                <th>Quantity</th>
+                <th>Unit</th>
+                <th>Reorder</th>
+                <th class="action-col">Action</th>
               </tr>
             </thead>
             <tbody id="kitchenTable"></tbody>
@@ -294,7 +388,11 @@
       </section>
 
       <section class="content-section" id="lossSection">
-        <div class="section-heading"><h2>Loss History - Seafood</h2><p>Spoilage / Mishandling for seafood (works offline & syncs)</p></div>
+        <div class="section-heading">
+          <h2>Loss History - Seafood</h2>
+          <p>Spoilage / Mishandling for seafood (works offline & syncs)</p>
+        </div>
+
         <div class="table-wrap modern-card">
           <table class="records-table inventory-table">
             <colgroup>
@@ -306,16 +404,28 @@
               <col style="width: 180px" />
             </colgroup>
             <thead>
-              <tr><th>Product</th><th>Qty</th><th>Unit</th><th>Reason</th><th>Date</th><th class="action-col">Action</th></tr>
+              <tr>
+                <th>Product</th>
+                <th>Qty</th>
+                <th>Unit</th>
+                <th>Reason</th>
+                <th>Date</th>
+                <th class="action-col">Action</th>
+              </tr>
             </thead>
             <tbody id="seafoodLossTable"></tbody>
           </table>
         </div>
 
-        <div class="section-heading split-top"><h2>Loss History - Other Kitchen Food</h2><p>Spoilage / Mishandling for kitchen items (works offline & syncs)</p></div>
+        <div class="section-heading split-top">
+          <h2>Loss History - Other Kitchen Food</h2>
+          <p>Spoilage / Mishandling for kitchen items (works offline & syncs)</p>
+        </div>
+
         <div class="report-actions">
           <button type="button" onclick="exportLossCSV()">Export Loss CSV</button>
         </div>
+
         <div class="table-wrap modern-card">
           <table class="records-table inventory-table">
             <colgroup>
@@ -327,7 +437,14 @@
               <col style="width: 180px" />
             </colgroup>
             <thead>
-              <tr><th>Product</th><th>Qty</th><th>Unit</th><th>Reason</th><th>Date</th><th class="action-col">Action</th></tr>
+              <tr>
+                <th>Product</th>
+                <th>Qty</th>
+                <th>Unit</th>
+                <th>Reason</th>
+                <th>Date</th>
+                <th class="action-col">Action</th>
+              </tr>
             </thead>
             <tbody id="kitchenLossTable"></tbody>
           </table>
@@ -342,11 +459,14 @@
         <h3>Products Used (Stock Out)</h3>
         <button type="button" class="modal-close" onclick="closeUsageModal()">✕</button>
       </div>
+
       <p class="modal-hint">
-        ✅ Seafood: enter <strong>portion used</strong>.<br/>
+        ✅ Seafood: enter <strong>portion used</strong>.<br />
         ✅ Other Kitchen Food: enter <strong>quantity in units</strong>.
       </p>
+
       <div class="modal-body" id="usageList"></div>
+
       <div class="modal-actions">
         <button type="button" class="secondary-btn" onclick="clearUsage()">Clear</button>
         <button type="button" class="primary-btn" onclick="saveUsage()">Save</button>

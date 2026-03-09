@@ -399,6 +399,69 @@ justify-content:space-between;
 align-items:center;
 }
 
+.menu-toggle{
+  background:#fff;
+  border:1px solid var(--border);
+  margin-right:12px;
+  padding:10px 12px;
+  border-radius:10px;
+  cursor:pointer;
+}
+
+.sidebar{
+  transition:all 0.3s ease;
+}
+
+.sidebar.collapsed{
+  width:88px;
+  padding:20px 10px;
+}
+
+.sidebar.collapsed .brand-text,
+.sidebar.collapsed .sidebar-note,
+.sidebar.collapsed .nav-item span{
+  display:none;
+}
+
+.sidebar.collapsed .nav-item{
+  justify-content:center;
+}
+
+.sidebar-overlay{
+  position:fixed;
+  inset:0;
+  background:rgba(15,23,42,0.45);
+  opacity:0;
+  visibility:hidden;
+  transition:all 0.3s ease;
+  z-index:20;
+}
+
+.sidebar-overlay.show{
+  opacity:1;
+  visibility:visible;
+}
+
+@media (max-width: 900px){
+  .sidebar{
+    position:fixed;
+    top:0;
+    left:0;
+    height:100vh;
+    z-index:30;
+    transform:translateX(-100%);
+  }
+
+  .sidebar.open{
+    transform:translateX(0);
+  }
+
+  .main-content{
+    width:100%;
+    padding:20px;
+  }
+}
+
 
 /* RESPONSIVE */
 
