@@ -1,4 +1,4 @@
-const CACHE_NAME = "seabite-frontend-cache-v200"; // bump when you want to force reset cache
+const CACHE_NAME = "seabite-frontend-cache-v201"; // bump when you want to force reset cache
 
 const CORE_ASSETS = [
   "./",

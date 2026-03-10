@@ -166,6 +166,24 @@ function downloadTextFile(filename, text, mime = "text/plain;charset=utf-8") {
   URL.revokeObjectURL(url);
 }
 
+
+/***********************
+ * LOADING UI
+ ***********************/
+function showAppLoading(message = "Connecting to backend and fetching your latest data...") {
+  const overlay = $("appLoading");
+  if (!overlay) return;
+  const text = overlay.querySelector("p");
+  if (text) text.textContent = message;
+  overlay.classList.add("show");
+}
+
+function hideAppLoading() {
+  const overlay = $("appLoading");
+  if (!overlay) return;
+  overlay.classList.remove("show");
+}
+
 /***********************
  * STATUS UI
  ***********************/
@@ -481,56 +499,61 @@ function enrichLosses(lossList) {
  * LOAD DATA
  ***********************/
 async function loadAll() {
-  setNetUI();
-  await setQueueUI();
+  showAppLoading("Connecting to backend and fetching your latest data...");
+  try {
+    setNetUI();
+    await setQueueUI();
 
-  const localProducts = normalizeProducts(await idbGetAll("products"));
-  const localLossesRaw = await idbGetAll("losses");
+    const localProducts = normalizeProducts(await idbGetAll("products"));
+    const localLossesRaw = await idbGetAll("losses");
 
-  if (navigator.onLine) {
-    try {
-      const srvSales = await api("/api/finance/sales");
-      const srvExpenses = await api("/api/finance/expenses");
-      const srvProducts = normalizeProducts(await api("/api/inventory/products"));
-      const srvLossesRaw = await api("/api/inventory/losses");
+    if (navigator.onLine) {
+      try {
+        const srvSales = await api("/api/finance/sales");
+        const srvExpenses = await api("/api/finance/expenses");
+        const srvProducts = normalizeProducts(await api("/api/inventory/products"));
+        const srvLossesRaw = await api("/api/inventory/losses");
 
-      const srvKeys = new Set(srvProducts.map(productMatchKey));
-      const unsyncedTmpProducts = localProducts.filter(p => isTmpId(p.id) && !srvKeys.has(productMatchKey(p)));
+        const srvKeys = new Set(srvProducts.map(productMatchKey));
+        const unsyncedTmpProducts = localProducts.filter(p => isTmpId(p.id) && !srvKeys.has(productMatchKey(p)));
 
-      sales = srvSales;
-      expenses = srvExpenses;
+        sales = srvSales;
+        expenses = srvExpenses;
+        products = dedupeProducts([...srvProducts, ...unsyncedTmpProducts]);
 
-      products = dedupeProducts([...srvProducts, ...unsyncedTmpProducts]);
+        const unsyncedTmpLosses = (localLossesRaw || []).filter(l => {
+          if (!isTmpId(l.id)) return false;
+          return !(srvLossesRaw || []).some(srv => isSameLoss(l, srv));
+        });
 
-      const unsyncedTmpLosses = (localLossesRaw || []).filter(l => {
-        if (!isTmpId(l.id)) return false;
-        return !(srvLossesRaw || []).some(srv => isSameLoss(l, srv));
-      });
+        losses = enrichLosses([...(srvLossesRaw || []), ...unsyncedTmpLosses]);
 
-      losses = enrichLosses([...(srvLossesRaw || []), ...unsyncedTmpLosses]);
-
-      await idbClear("sales");    await idbPutMany("sales", sales);
-      await idbClear("expenses"); await idbPutMany("expenses", expenses);
-      await idbClear("products"); await idbPutMany("products", products);
-      await idbClear("losses");   await idbPutMany("losses", losses);
-
-    } catch (e) {
+        await idbClear("sales");    await idbPutMany("sales", sales);
+        await idbClear("expenses"); await idbPutMany("expenses", expenses);
+        await idbClear("products"); await idbPutMany("products", products);
+        await idbClear("losses");   await idbPutMany("losses", losses);
+      } catch (e) {
+        console.error("loadAll online fetch failed:", e);
+        sales = await idbGetAll("sales");
+        expenses = await idbGetAll("expenses");
+        products = dedupeProducts(normalizeProducts(await idbGetAll("products")));
+        losses = enrichLosses(await idbGetAll("losses"));
+        throw e;
+      }
+    } else {
       sales = await idbGetAll("sales");
       expenses = await idbGetAll("expenses");
       products = dedupeProducts(normalizeProducts(await idbGetAll("products")));
       losses = enrichLosses(await idbGetAll("losses"));
     }
-  } else {
-    sales = await idbGetAll("sales");
-    expenses = await idbGetAll("expenses");
-    products = dedupeProducts(normalizeProducts(await idbGetAll("products")));
-    losses = enrichLosses(await idbGetAll("losses"));
-  }
 
-  renderFinanceTable();
-  renderProductsTables();
-  renderUsageSummary();
-  renderLossTables();
+    renderFinanceTable();
+    renderProductsTables();
+    renderUsageSummary();
+    renderLossTables();
+  } finally {
+    hideAppLoading();
+  }
 }
 
 /***********************
@@ -1887,18 +1910,32 @@ $("installBtn")?.addEventListener("click", () => {
 
 })();
 
-async function bootApp() {
+
+
+
+async function wakeBackend() {
   try {
-    await bootApp();
+    await fetch(`${API_BASE}/`, { method: "GET" });
+  } catch (e) {
+    console.warn("Wake ping failed:", e);
+  }
+}
+
+async function bootApp() {
+  showAppLoading("Waking backend and loading your restaurant data...");
+  try {
+    await wakeBackend();
+    await new Promise(resolve => setTimeout(resolve, 2500));
+    await loadAll();
   } catch (err) {
     console.warn("Initial load failed, retrying...", err);
-
-    // wait for Render backend to wake up
+    showAppLoading("Backend is waking up. Retrying data load...");
     setTimeout(async () => {
       try {
-        await bootApp();
+        await loadAll();
       } catch (retryErr) {
         console.error("Retry load failed:", retryErr);
+        hideAppLoading();
       }
     }, 4000);
   }
@@ -1911,6 +1948,7 @@ setNetUI();
 initAdminReset();
 initSeaBiteSidebarNavigation();
 bootApp();
+
 
 window.addProduct = addProduct;
 window.addSale = addSale;
