@@ -816,9 +816,9 @@ async function addSale() {
 
   if (navigator.onLine && !result.ok) {
     alert(`Sale failed: ${result.error}`);
-    await loadAll();
+    await bootApp();
   } else if (navigator.onLine && result.ok) {
-    await loadAll();
+    await bootApp();
   }
 }
 
@@ -853,9 +853,9 @@ async function addExpense() {
 
   if (navigator.onLine && !result.ok) {
     alert(`Expense failed: ${result.error}`);
-    await loadAll();
+    await bootApp();
   } else if (navigator.onLine && result.ok) {
-    await loadAll();
+    await bootApp();
   }
 }
 
@@ -875,9 +875,9 @@ async function deleteRecord(id, type) {
 
     if (navigator.onLine && !result.ok && !result.queued) {
       alert(`Delete failed: ${result.error}`);
-      await loadAll();
+      await bootApp();
     } else if (navigator.onLine && result.ok) {
-      await loadAll();
+      await bootApp();
     }
     return;
   }
@@ -894,9 +894,9 @@ async function deleteRecord(id, type) {
 
   if (navigator.onLine && !result.ok && !result.queued) {
     alert(`Delete failed: ${result.error}`);
-    await loadAll();
+    await bootApp();
   } else if (navigator.onLine && result.ok) {
-    await loadAll();
+    await bootApp();
   }
 }
 
@@ -927,9 +927,9 @@ async function editRecord(id, type) {
 
     if (navigator.onLine && !result.ok && !result.queued) {
       alert(`Update failed: ${result.error}`);
-      await loadAll();
+      await bootApp();
     } else if (navigator.onLine && result.ok) {
-      await loadAll();
+      await bootApp();
     }
     return;
   }
@@ -959,9 +959,9 @@ async function editRecord(id, type) {
 
   if (navigator.onLine && !result.ok && !result.queued) {
     alert(`Update failed: ${result.error}`);
-    await loadAll();
+    await bootApp();
   } else if (navigator.onLine && result.ok) {
-    await loadAll();
+    await bootApp();
   }
 }
 
@@ -1087,9 +1087,9 @@ async function addProduct() {
 
   if (navigator.onLine && !result.ok) {
     alert(`Product create failed: ${result.error}`);
-    await loadAll();
+    await bootApp();
   } else if (navigator.onLine && result.ok) {
-    await loadAll();
+    await bootApp();
   }
 }
 
@@ -1160,9 +1160,9 @@ async function editProduct(id) {
 
   if (navigator.onLine && !result.ok && !result.queued) {
     alert(`Product update failed: ${result.error}`);
-    await loadAll();
+    await bootApp();
   } else if (navigator.onLine && result.ok) {
-    await loadAll();
+    await bootApp();
   }
 }
 
@@ -1190,9 +1190,9 @@ async function deleteProduct(id) {
 
   if (navigator.onLine && !result.ok && !result.queued) {
     alert(`Product delete failed: ${result.error}`);
-    await loadAll();
+    await bootApp();
   } else if (navigator.onLine && result.ok) {
-    await loadAll();
+    await bootApp();
   }
 }
 
@@ -1272,9 +1272,9 @@ async function stockMove(productId, type) {
 
   if (navigator.onLine && !result.ok) {
     alert(`Stock move failed: ${result.error}`);
-    await loadAll();
+    await bootApp();
   } else if (navigator.onLine && result.ok) {
-    await loadAll();
+    await bootApp();
   }
 }
 
@@ -1364,9 +1364,9 @@ async function recordLoss(productId, reason) {
 
   if (navigator.onLine && !result.ok) {
     alert(`Loss record failed: ${result.error}`);
-    await loadAll();
+    await bootApp();
   } else if (navigator.onLine && result.ok) {
-    await loadAll();
+    await bootApp();
   }
 }
 
@@ -1451,9 +1451,9 @@ async function deleteLoss(lossId) {
 
   if (navigator.onLine && !result.ok && !result.queued) {
     alert(`Loss delete failed: ${result.error}`);
-    await loadAll();
+    await bootApp();
   } else if (navigator.onLine && result.ok) {
-    await loadAll();
+    await bootApp();
   }
 }
 
@@ -1738,7 +1738,7 @@ async function flushQueue() {
   }
 
   await setQueueUI();
-  await loadAll();
+  await bootApp();
 }
 
 $("syncBtn")?.addEventListener("click", async () => {
@@ -1804,7 +1804,7 @@ function initAdminReset() {
 
       if (status) status.textContent = `✅ Reset done: ${JSON.stringify(resp)}`;
 
-      await loadAll();
+      await bootApp();
       alert("✅ Database reset completed. Offline cache cleared.");
     } catch (e) {
       const payload = e.data || { error: e.message };
@@ -1889,14 +1889,14 @@ $("installBtn")?.addEventListener("click", () => {
 
 async function bootApp() {
   try {
-    await loadAll();
+    await bootApp();
   } catch (err) {
     console.warn("Initial load failed, retrying...", err);
 
     // wait for Render backend to wake up
     setTimeout(async () => {
       try {
-        await loadAll();
+        await bootApp();
       } catch (retryErr) {
         console.error("Retry load failed:", retryErr);
       }
