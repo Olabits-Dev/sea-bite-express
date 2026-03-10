@@ -552,6 +552,75 @@ router.post("/products/:id/loss", async (req, res) => {
   }
 });
 
+
+
+// -----------------------
+// EXPORT INVENTORY CSV
+// -----------------------
+router.get("/export/inventory.csv", async (req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT
+        id,
+        name,
+        COALESCE(sku, '') AS sku,
+        COALESCE(UPPER(category), 'KITCHEN') AS category,
+        COALESCE(unit, '') AS unit,
+        COALESCE(qty, 0) AS qty,
+        COALESCE(reorder_level, 0) AS reorder_level,
+        COALESCE(portion_size, 0) AS portion_size,
+        updated_at,
+        created_at
+      FROM products
+      ORDER BY name ASC, id ASC
+    `);
+
+    const esc = (v) => {
+      const s = String(v ?? "");
+      return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+    };
+
+    const header = [
+      'ID',
+      'Name',
+      'SKU',
+      'Category',
+      'Unit',
+      'Quantity',
+      'Reorder Level',
+      'Portion Size',
+      'Updated At',
+      'Created At'
+    ];
+
+    const lines = [header.join(',')];
+
+    for (const row of rows) {
+      lines.push([
+        row.id,
+        esc(row.name),
+        esc(row.sku),
+        esc(row.category),
+        esc(row.unit),
+        row.qty,
+        row.reorder_level,
+        row.portion_size,
+        esc(row.updated_at ? new Date(row.updated_at).toISOString() : ''),
+        esc(row.created_at ? new Date(row.created_at).toISOString() : '')
+      ].join(','));
+    }
+
+    const csv = lines.join('\n');
+
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="inventory.csv"');
+    res.status(200).send(csv);
+  } catch (e) {
+    console.error('GET /export/inventory.csv error:', e);
+    res.status(500).json({ error: 'Failed to export inventory CSV', detail: e.message });
+  }
+});
+
 // -----------------------
 // GET LOSSES
 // -----------------------
