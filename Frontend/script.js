@@ -1910,7 +1910,36 @@ $("installBtn")?.addEventListener("click", () => {
 
 })();
 
+function initSeaBiteSidebarNavigation() {
 
+  const sidebar = document.getElementById("sidebar");
+  const toggle = document.getElementById("menuToggle");
+  const navItems = document.querySelectorAll(".nav-item");
+
+  if (!sidebar || !toggle) return;
+
+  toggle.addEventListener("click", () => {
+    sidebar.classList.toggle("collapsed");
+  });
+
+  navItems.forEach(btn => {
+    btn.addEventListener("click", () => {
+
+      navItems.forEach(n => n.classList.remove("active"));
+      btn.classList.add("active");
+
+      const target = btn.getAttribute("data-scroll");
+      if (!target) return;
+
+      const el = document.getElementById(target);
+      if (el) {
+        el.scrollIntoView({ behavior: "smooth" });
+      }
+
+    });
+  });
+
+}
 
 
 async function wakeBackend() {
