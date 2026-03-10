@@ -1887,13 +1887,30 @@ $("installBtn")?.addEventListener("click", () => {
 
 })();
 
+async function bootApp() {
+  try {
+    await loadAll();
+  } catch (err) {
+    console.warn("Initial load failed, retrying...", err);
+
+    // wait for Render backend to wake up
+    setTimeout(async () => {
+      try {
+        await loadAll();
+      } catch (retryErr) {
+        console.error("Retry load failed:", retryErr);
+      }
+    }, 4000);
+  }
+}
+
 /***********************
  * INIT
  ***********************/
 setNetUI();
 initAdminReset();
 initSeaBiteSidebarNavigation();
-loadAll();
+bootApp();
 
 window.addProduct = addProduct;
 window.addSale = addSale;
