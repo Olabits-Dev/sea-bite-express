@@ -379,6 +379,148 @@ tr:hover{
 background:#f8fafc;
 }
 
+/* Sidebar */
+
+.sidebar{
+  width:260px;
+  background:#ffffff;
+  border-right:1px solid #e5e7eb;
+  position:fixed;
+  top:0;
+  left:0;
+  height:100vh;
+  transition:transform 0.25s ease;
+  z-index:1000;
+}
+
+/* hidden state */
+
+.sidebar:not(.open){
+  transform:translateX(-100%);
+}
+
+/* desktop always open */
+
+@media (min-width:981px){
+
+  .sidebar{
+    transform:none;
+  }
+
+}
+
+/* =========================
+   BUTTON COLORS
+========================= */
+
+button{
+  border:none;
+  border-radius:8px;
+  padding:8px 14px;
+  font-weight:500;
+  cursor:pointer;
+  transition:all 0.2s ease;
+}
+
+/* Primary actions */
+.primary-btn{
+  background:#2563eb;
+  color:#fff;
+}
+
+.primary-btn:hover{
+  background:#1d4ed8;
+}
+
+/* Edit button */
+.edit-btn{
+  background:#3b82f6;
+  color:#fff;
+}
+
+.edit-btn:hover{
+  background:#2563eb;
+}
+
+/* Delete button */
+.delete-btn{
+  background:#ef4444;
+  color:#fff;
+}
+
+.delete-btn:hover{
+  background:#dc2626;
+}
+
+/* Stock IN */
+.in-btn{
+  background:#10b981;
+  color:#fff;
+}
+
+.in-btn:hover{
+  background:#059669;
+}
+
+/* Stock OUT */
+.out-btn{
+  background:#f59e0b;
+  color:#fff;
+}
+
+.out-btn:hover{
+  background:#d97706;
+}
+
+/* Spoilage / Mishandling */
+.warn-btn{
+  background:#fb923c;
+  color:#fff;
+}
+
+.warn-btn:hover{
+  background:#ea580c;
+}
+
+/* Secondary buttons */
+.secondary-btn{
+  background:#e5e7eb;
+  color:#111827;
+}
+
+.secondary-btn:hover{
+  background:#d1d5db;
+}
+
+/* CSV download */
+.csv-btn{
+  background:#6366f1;
+  color:#fff;
+}
+
+.csv-btn:hover{
+  background:#4f46e5;
+}
+
+/* Email button */
+.email-btn{
+  background:#06b6d4;
+  color:#fff;
+}
+
+.email-btn:hover{
+  background:#0891b2;
+}
+
+/* Sync button */
+.sync-btn{
+  background:#22c55e;
+  color:#fff;
+}
+
+.sync-btn:hover{
+  background:#16a34a;
+}
 
 /* MODAL */
 

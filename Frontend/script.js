@@ -1833,66 +1833,59 @@ $("installBtn")?.addEventListener("click", () => {
 /***********************
  * SIDEBAR / NAVIGATION
  ***********************/
-function initSeaBiteSidebarNavigation() {
-  const sidebar = $("sidebar");
-  const menuToggle = $("menuToggle");
-  const sidebarOverlay = $("sidebarOverlay");
-  const navItems = document.querySelectorAll(".nav-item[data-scroll]");
+(function initSeaBiteSidebarNavigation(){
 
-  if (!sidebar || !menuToggle) return;
+  const sidebar = document.getElementById("sidebar");
+  const menuToggle = document.getElementById("menuToggle");
 
-  function isMobileView() {
-    return window.innerWidth <= 900;
-  }
+  if(!sidebar) return;
 
-  function closeMobileSidebar() {
-    sidebar.classList.remove("open");
-    if (sidebarOverlay) sidebarOverlay.classList.remove("show");
-  }
-
-  function openMobileSidebar() {
-    sidebar.classList.add("open");
-    if (sidebarOverlay) sidebarOverlay.classList.add("show");
-  }
-
- menuToggle.addEventListener('click', () => {
-
-  if(window.innerWidth <= 980){
+  /* Toggle sidebar */
+  menuToggle?.addEventListener("click", function(e){
+    e.stopPropagation();
     sidebar.classList.toggle("open");
-  }else{
-    sidebar.classList.toggle("closed");
-  }
+  });
 
-});
+  /* Close sidebar when clicking outside */
+  document.addEventListener("click", function(e){
 
-  if (sidebarOverlay) {
-    sidebarOverlay.addEventListener("click", closeMobileSidebar);
-  }
+    const clickInsideSidebar = sidebar.contains(e.target);
+    const clickMenuButton = menuToggle?.contains(e.target);
 
-  navItems.forEach((btn) => {
-    btn.addEventListener("click", () => {
-      navItems.forEach((item) => item.classList.remove("active"));
+    if(!clickInsideSidebar && !clickMenuButton){
+      sidebar.classList.remove("open");
+    }
+
+  });
+
+  /* Auto close when selecting nav item (mobile UX) */
+  document.querySelectorAll(".nav-item[data-scroll]").forEach((btn)=>{
+
+    btn.addEventListener("click", ()=>{
+
+      document.querySelectorAll(".nav-item").forEach(n => n.classList.remove("active"));
       btn.classList.add("active");
 
-      const targetId = btn.getAttribute("data-scroll");
-      const targetEl = document.getElementById(targetId);
+      const sectionId = btn.getAttribute("data-scroll");
+      const section = document.getElementById(sectionId);
 
-      if (targetEl) {
-        targetEl.scrollIntoView({ behavior: "smooth", block: "start" });
+      if(section){
+        section.scrollIntoView({
+          behavior:"smooth",
+          block:"start"
+        });
       }
 
-      if (isMobileView()) {
-        closeMobileSidebar();
+      /* auto close sidebar */
+      if(window.innerWidth <= 980){
+        sidebar.classList.remove("open");
       }
+
     });
+
   });
 
-  window.addEventListener("resize", () => {
-    if (!isMobileView()) {
-      closeMobileSidebar();
-    }
-  });
-}
+})();
 
 /***********************
  * INIT
